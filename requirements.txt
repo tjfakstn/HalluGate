@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+httpx
+pysbd
+torch
+transformers
+sentence-transformers
+openai
+pytest
+pytest-asyncio
