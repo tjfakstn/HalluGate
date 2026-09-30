@@ -117,7 +117,8 @@ class Judge:
 | `StudentJudge` | 운영. 40단어 조각 → 임베딩 top-k(원문 순서) → 교차 인코더 logit. 사양은 SSOT §4 |
 | `LexicalJudge` | 테스트·데모 전용. 근거에 없는 단어 비율. **판별력 없음, 측정에 사용 금지** |
 
-- `hallucinated = score >= JUDGE_THRESHOLD` (기본 0.0, 📋 S4에서 보정)
+- `hallucinated = score >= JUDGE_THRESHOLD` (기본 0.0, 📋 S4에서 보정 — 0.0은 문장 재현율 0.22로 너무 보수적, SSOT §5 S3)
+- 서버 시작 시 판정기를 예열한다 (근거 준비 1회 + 판정 3회) ✅
 - 모델 하나를 여러 요청이 공유하므로 `StudentJudge`는 락으로 직렬화한다. 판정은 `asyncio.to_thread`로 이벤트 루프 밖에서 실행한다.
 
 ## 5. 전달 정책 — `VerifyPipeline` ✅
@@ -178,14 +179,15 @@ class Judge:
 | A2 | OpenAI 공식 SDK(스트리밍)로 호출 가능, 판정을 `chunk.verification`으로 읽을 수 있음 | ✅ 테스트 |
 | A3 | hold+cut에서 환각 문장이 한 글자도 나가지 않음 | ✅ 테스트 |
 | A4 | pass에서 판정이 다음 토큰을 기다리지 않고 전달됨 | ✅ 테스트 (토큰 간격 50ms, 전달 지연 < 40ms) |
-| A5 | 게이트웨이 안 AUROC ≥ 0.80 (student_vark, RAGTruth dev 60개 재생) | 🚧 측정 대기 |
-| A6 | GPU 판정 p95 ≤ 30ms, pass 판정 전달 p95 ≤ 50ms | 🚧 측정 대기 |
+| A5 | 게이트웨이 안 AUROC ≥ 0.80 (student_vark, RAGTruth dev 60개 재생) | ✅ 0.853 |
+| A6 | GPU 판정 p95 ≤ 30ms, pass 판정 전달 p95 ≤ 50ms | ✅ 20.6ms / 21.1ms |
+| A7 | 운영 임계값에서 멀쩡한 응답 오표시율과 환각 응답 탐지율이 서비스 요구를 만족 (기준은 S4에서 정의) | 📋 임계값 0에서 6% / 31% |
 
 ## 9. 로드맵
 
 | 단계 | 내용 |
 |---|---|
-| S3 | 학습 판정기로 A5·A6 측정, CPU 판정 속도 측정, 중간보고 |
+| S3 | ~~학습 판정기로 A5·A6 측정, CPU 판정 속도 측정~~ ✅, 중간보고 |
 | S4 | 임계값 보정, 문장보다 짧은 검증 단위(부분 문장 판정 성능 측정 포함), 위험 신호 기반 가변 단위·정책, 상용 API 연결 |
 | S5 | RAGTruth test 1회 개방 최종 평가, 기존 도구의 고정 설정(NeMo Guardrails의 chunk 200 등)과 비교 |
 | S6 | 데모 (서비스 예제 + 판정 시각화), 보고서, SOFTCON |
