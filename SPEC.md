@@ -46,7 +46,8 @@ OpenAI Chat Completions 요청을 그대로 받는다. 추가 필드 하나를 �
   "verification": {                     // 선택. OpenAI SDK에서는 extra_body로 전달
     "context": "근거 문서" | ["문서1", "문서2"],
     "mode": "pass" | "hold" | "off",     // 기본: 서버 설정 VERIFY_MODE (pass)
-    "action": "flag" | "cut"             // 기본: 서버 설정 VERIFY_ACTION (flag)
+    "action": "flag" | "cut",            // 기본: 서버 설정 VERIFY_ACTION (flag)
+    "stride": 4                          // 선택. 문장 앞부분 재판정 간격(업스트림 조각 수). 0이면 끔. 기본: JUDGE_STRIDE
   }
 }
 ```
@@ -76,9 +77,13 @@ SSE(`text/event-stream`). 세 종류의 청크가 나간다.
 
 판정 객체:
 ```jsonc
-{"sentence_idx": 1, "start": 42, "text": "문장(앞뒤 공백 제거)",
- "score": 2.31, "hallucinated": true, "judge_ms": 14.8}
+{"kind": "sentence" | "prefix", "sentence_idx": 1, "start": 42, "upto": 97,
+ "text": "판정한 텍스트(앞뒤 공백 제거)", "score": 2.31, "hallucinated": true,
+ "judge_ms": 14.8, "released_at_verdict": 120}
 ```
+- `kind`: `sentence`는 완성 문장 판정, `prefix`는 문장이 끝나기 전 앞부분 판정(재판정 간격 `stride`가 켜졌을 때)
+- `start`/`upto`: 판정한 텍스트가 응답 전체에서 차지하는 글자 구간 [start, upto)
+- `released_at_verdict`: 이 판정이 나온 순간까지 사용자에게 보낸 글자 수 (누출 계산용)
 cut 발생 시 종료 청크에 `{"cut": true, "sentence_idx": n}`이 함께 실린다.
 
 ### 2.3 비스트리밍 응답 ✅
@@ -135,7 +140,21 @@ class Judge:
 | `cut` | 판정 청크 → 종료 청크(`content_filter`) → 스트림 종료, 업스트림 연결 닫음. hold면 해당 문장은 한 글자도 나가지 않음 |
 
 - 업스트림 읽기는 별도 태스크(producer)로 돌려, 판정 중에도 토큰 수신이 멈추지 않게 한다.
-- 📋 S4: 문장·구간별로 정책을 바꾸는 적응형 정책. 예: 숫자·고유명사가 있는 구간만 hold.
+
+### 5.1 앞부분 재판정 (`stride` = s ≥ 1) ✅
+문장이 끝나기를 기다리지 않고, 현재 문장에 업스트림 조각이 s개 쌓일 때마다 **지금까지의 문장 앞부분**을 판정한다
+(앞부분 학습 판정기 `student_prefix`와 함께 쓰는 것을 전제로 한다, SSOT E2). 문장이 완성되면 그 문장 전체도 판정한다.
+
+| mode | 동작 |
+|---|---|
+| `pass` | 본문은 즉시 전달. 앞부분 판정과 문장 판정을 백그라운드로 실행하고 결과를 **발생 순서대로** 전달 → 문장 도중에도 경보 가능 |
+| `hold` | 본문을 보류하다가, 앞부분 판정이 **환각 아님**이면 그 시점까지 쌓인 본문을 내보낸다. 문장 완성 시 문장 판정 후 나머지를 내보낸다. 보류 지연이 "문장 길이"에서 "s 조각 + 판정 시간"으로 줄어든다 |
+
+- 환각 판정 시 동작은 `action`을 따른다. `hold+cut`이면 환각으로 판정된 앞부분의 보류 중인 글자는 나가지 않는다.
+- 불변식 G2(본문 보존)는 그대로 유지된다.
+- 조각 수는 업스트림 SSE 조각 기준이다(상용 API에서는 대략 토큰 1개, 가짜 LLM에서는 단어 1개).
+
+- 📋 S4: 위험도에 따라 재판정 간격과 보류 여부를 바꾸는 적응형 정책.
 
 ## 6. 측정 기록 ✅
 
@@ -167,6 +186,7 @@ class Judge:
 | `JUDGE_EMBEDDER` | `sentence-transformers/all-MiniLM-L6-v2` | 근거 검색 임베딩 |
 | `JUDGE_K` / `JUDGE_MAX_LEN` / `JUDGE_CHUNK_WORDS` | 8 / 512 / 40 | 판정기 입력 구성 |
 | `JUDGE_THRESHOLD` | 0.0 | 환각 판정 logit 임계값 |
+| `JUDGE_STRIDE` | 0 | 앞부분 재판정 간격 (0 = 문장 끝에서만 판정) |
 | `JUDGE_DEVICE` | 자동 | `cuda` / `cpu` |
 | `VERIFY_MODE` / `VERIFY_ACTION` | `pass` / `flag` | 요청에 지정이 없을 때 기본 정책 |
 | `METRICS_PATH` | `gateway_metrics.jsonl` | 빈 값이면 기록 안 함 |
@@ -181,6 +201,7 @@ class Judge:
 | A4 | pass에서 판정이 다음 토큰을 기다리지 않고 전달됨 | ✅ 테스트 (토큰 간격 50ms, 전달 지연 < 40ms) |
 | A5 | 게이트웨이 안 AUROC ≥ 0.80 (student_vark, RAGTruth dev 60개 재생) | ✅ 0.853 |
 | A6 | GPU 판정 p95 ≤ 30ms, pass 판정 전달 p95 ≤ 50ms | ✅ 20.6ms / 21.1ms |
+| A8 | `stride`를 켜도 본문 보존 100%, hold에서 앞부분이 안전 판정되면 문장 완성 전에 그 부분이 전달됨 | ✅ 테스트 |
 | A7 | 운영 임계값에서 멀쩡한 응답 오표시율과 환각 응답 탐지율이 서비스 요구를 만족 (기준은 S4에서 정의) | 📋 임계값 0에서 6% / 31% |
 
 ## 9. 로드맵
