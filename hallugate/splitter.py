@@ -52,6 +52,10 @@ class IncrementalSplitter:
         self._buf = self._buf[prev:]
         return out
 
+    def pending(self):
+        """아직 끝나지 않은 현재 문장: (응답 전체에서의 시작 위치, 지금까지의 텍스트)."""
+        return self._offset, self._buf
+
     def flush(self):
         """스트림 종료 시 남은 텍스트를 마지막 문장으로 내보낸다 (공백뿐이면 판정은 건너뛰게 됨)."""
         if not self._buf:

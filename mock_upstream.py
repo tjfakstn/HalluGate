@@ -3,13 +3,16 @@
 요청 body에 다음 필드를 넣으면 그대로 재생한다 (실제 API로는 보내지 말 것):
   mock_response : 흘려보낼 답변 텍스트 (없으면 마지막 user 메시지를 되돌려줌)
   mock_ttft_ms  : 첫 토큰까지 지연 (기본 300ms)
-  mock_token_ms : 토큰(단어) 간 간격 (기본 25ms ≈ 초당 40토큰, 상용 API와 비슷한 속도)
+  mock_token_ms : 토큰 간 간격 (기본 25ms ≈ 초당 40토큰, 상용 API와 비슷한 속도)
+
+토큰 단위: 기본은 단어. 환경 변수 MOCK_TOKENIZER=tiktoken 이면 GPT 토큰(cl100k_base) 단위.
 
 실행: python mock_upstream.py --port 9000
 """
 import argparse
 import asyncio
 import json
+import os
 import re
 import time
 import uuid
@@ -20,7 +23,20 @@ from fastapi.responses import JSONResponse, StreamingResponse
 app = FastAPI(title='mock-llm')
 
 
+_ENC = None
+if os.environ.get('MOCK_TOKENIZER', 'words') == 'tiktoken':
+    # 상용 API처럼 GPT 토큰 단위로 흘려보낸다 (E1·E2의 토큰 단위와 일치). 이어 붙이면 원문과 같다.
+    import tiktoken
+    _ENC = tiktoken.get_encoding('cl100k_base')
+
+
 def _tokens(text):
+    if _ENC is not None:
+        ids = _ENC.encode(text)
+        dec, starts = _ENC.decode_with_offsets(ids)
+        if dec == text:
+            ends = starts[1:] + [len(text)]
+            return [text[a:b] for a, b in zip(starts, ends) if b > a]
     return re.findall(r'\S+\s*|\s+', text)
 
 

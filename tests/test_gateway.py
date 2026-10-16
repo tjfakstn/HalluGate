@@ -265,3 +265,74 @@ def test_student_judge_loads(tmp_path):
     ref = j.prepare(REF * 5)
     v = j.judge(ref, 'The company was founded in 1998.')
     assert isinstance(v.score, float) and v.judge_ms > 0
+
+
+# ---------------- 앞부분 재판정 (stride, SPEC §5.1) ----------------
+def test_splitter_pending_tracks_current_sentence():
+    sp = IncrementalSplitter()
+    sp.feed('First sentence here. Second sen')
+    off, buf = sp.pending()
+    assert off == len('First sentence here. ') and buf == 'Second sen'
+
+
+def test_extract_stride():
+    body = {'messages': [], 'verification': {'context': 'x', 'stride': 4}}
+    assert extract(body, with_stride=True)[4] == 4
+    assert extract({'messages': [], 'verification': {'context': 'x'}}, default_stride=2, with_stride=True)[4] == 2
+    with pytest.raises(ValueError):
+        extract({'messages': [], 'verification': {'context': 'x', 'stride': -1}}, with_stride=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['pass', 'hold'])
+async def test_stride_text_intact_and_prefix_verdicts(gw, mode):
+    client, s = gw
+    b = body(BAD_2ND, mode); b['verification']['stride'] = 2
+    text, ev, finish = await run(client, b)
+    assert text == BAD_2ND and finish == 'stop'                    # 본문 보존 (G2)
+    vs = [e for k, e in ev if k == 'v']
+    assert {'prefix', 'sentence'} <= {v['kind'] for v in vs}
+    assert all(v['start'] < v['upto'] and 'released_at_verdict' in v for v in vs)
+    # 두 번째 문장은 앞부분 판정에서 이미 환각으로 잡힘 (문장 판정보다 먼저)
+    first_alarm = next(v for v in vs if v['hallucinated'])
+    assert first_alarm['kind'] == 'prefix' and first_alarm['sentence_idx'] == 1
+    rec = json.loads(open(s.metrics_path).read().splitlines()[-1])
+    assert rec['stride'] == 2 and len(rec['checks']) > 0
+
+
+@pytest.mark.asyncio
+async def test_stride_hold_releases_safe_prefix_before_sentence_end(gw):
+    client, _ = gw
+    b = body(GOOD, 'hold'); b['verification']['stride'] = 2
+    text, ev, _ = await run(client, b)
+    assert text == GOOD
+    # 첫 문장의 문장 판정('sentence') 이전에, 안전한 앞부분이 이미 전달돼야 한다
+    first_sent_verdict = next(i for i, (k, e) in enumerate(ev) if k == 'v' and e['kind'] == 'sentence')
+    texts_before = [e for k, e in ev[:first_sent_verdict] if k == 't']
+    assert texts_before, '문장 판정 전에 아무것도 전달되지 않음'
+    # 첫 전달은 문장 전체가 아니라 앞부분이어야 한다 (문장 끝까지 기다리지 않음)
+    assert len(texts_before[0]) < len('The company was founded in 1998 in Seoul. ')
+
+
+@pytest.mark.asyncio
+async def test_stride_hold_cut_stops_inside_bad_sentence(gw):
+    client, _ = gw
+    b = body(BAD_2ND, 'hold', 'cut'); b['verification']['stride'] = 2
+    text, ev, finish = await run(client, b)
+    assert finish == 'content_filter'
+    assert text == 'The company was founded in 1998 in Seoul. '     # 환각 문장은 한 글자도 나가지 않음
+    cut = [e for k, e in ev if k == 'v' and e.get('cut')]
+    assert cut and cut[0]['kind'] == 'prefix'
+
+
+@pytest.mark.asyncio
+async def test_live_stride_hold_reduces_wait(live):
+    # 실제 서버: 앞부분 재판정을 켜면 hold의 첫 글자 지연이 문장 길이보다 짧아진다
+    url, _ = live
+    firsts = {}
+    for stride in [0, 2]:
+        b = body(BAD_2ND, 'hold'); b['mock_token_ms'] = 20; b['verification']['stride'] = stride
+        ev = await run_live(url, b)
+        assert ''.join(v for _, k, v in ev if k == 't') == BAD_2ND
+        firsts[stride] = next(t for t, k, _ in ev if k == 't')
+    assert firsts[2] < firsts[0] - 60, firsts

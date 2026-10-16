@@ -24,8 +24,9 @@ def _content_text(content):
     return ''
 
 
-def extract(body, default_mode='pass', default_action='flag'):
-    """반환: (upstream으로 보낼 body, reference 문자열 또는 None, mode, action)"""
+def extract(body, default_mode='pass', default_action='flag', default_stride=0, with_stride=False):
+    """반환: (upstream으로 보낼 body, reference 문자열 또는 None, mode, action[, stride])
+    with_stride=True면 앞부분 재판정 간격(stride)도 함께 돌려준다."""
     body = copy.deepcopy(body)
     opts = body.pop('verification', None) or {}
 
@@ -44,6 +45,9 @@ def extract(body, default_mode='pass', default_action='flag'):
         raise ValueError(f'verification.mode must be one of {sorted(MODES)}')
     if action not in ACTIONS:
         raise ValueError(f'verification.action must be one of {sorted(ACTIONS)}')
+    stride = opts.get('stride', default_stride)
+    if not isinstance(stride, int) or isinstance(stride, bool) or stride < 0:
+        raise ValueError('verification.stride must be a non-negative integer')
     if not ref:
         mode = 'off'
-    return body, ref, mode, action
+    return (body, ref, mode, action, stride) if with_stride else (body, ref, mode, action)

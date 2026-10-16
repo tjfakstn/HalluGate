@@ -23,6 +23,8 @@ class Settings:
     judge_chunk_words: int = field(default_factory=lambda: _env('JUDGE_CHUNK_WORDS', 40, int))
     # 판정기 출력(logit)이 이 값 이상이면 환각으로 본다. 0.0 = 확률 0.5. S4에서 보정 예정.
     judge_threshold: float = field(default_factory=lambda: _env('JUDGE_THRESHOLD', 0.0, float))
+    # 문장 앞부분 재판정 간격(업스트림 조각 수). 0이면 문장 끝에서만 판정. 앞부분 학습 판정기(student_prefix)와 함께 쓴다.
+    judge_stride: int = field(default_factory=lambda: _env('JUDGE_STRIDE', 0, int))
     judge_device: str = field(default_factory=lambda: _env('JUDGE_DEVICE', ''))
 
     # 기본 정책 (요청마다 verification 필드로 바꿀 수 있음)

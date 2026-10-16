@@ -60,6 +60,10 @@ def create_app(settings=None, judge=None, http_client=None):
             state['judge'] = StudentJudge(settings.judge_model_dir, settings.judge_embedder, settings.judge_k,
                                           settings.judge_max_len, settings.judge_chunk_words,
                                           settings.judge_threshold, settings.judge_device)
+        # 예열: 첫 요청에서 GPU 커널 준비로 판정이 수백 ms 걸리는 것을 막는다 (S3 측정에서 첫 요청 468ms 관측)
+        warm = state['judge'].prepare('warm up reference text ' * 40)
+        for _ in range(3):
+            state['judge'].judge(warm, 'This is a warm up sentence.')
         own_client = state['client'] is None
         if own_client:
             state['client'] = httpx.AsyncClient(timeout=settings.upstream_timeout)
@@ -90,15 +94,16 @@ def create_app(settings=None, judge=None, http_client=None):
     async def chat(request: Request):
         raw = await request.json()
         try:
-            body, ref, mode, action = ctxmod.extract(raw, settings.default_mode, settings.default_action)
+            body, ref, mode, action, stride = ctxmod.extract(raw, settings.default_mode, settings.default_action,
+                                                             settings.judge_stride, with_stride=True)
         except ValueError as e:
             return JSONResponse({'error': {'message': str(e), 'type': 'invalid_request_error'}}, status_code=400)
 
         client, judge = state['client'], state['judge']
         url = settings.upstream_base_url.rstrip('/') + '/chat/completions'
         headers = _headers(request)
-        rec = RequestRecord(mode=mode, action=action, tag=request.headers.get('x-request-tag', ''))
-        vh = {'x-verification-mode': mode, 'x-verification-action': action}
+        rec = RequestRecord(mode=mode, action=action, stride=stride, tag=request.headers.get('x-request-tag', ''))
+        vh = {'x-verification-mode': mode, 'x-verification-action': action, 'x-verification-stride': str(stride)}
 
         # ---------- 비스트리밍 ----------
         if not body.get('stream'):
@@ -168,10 +173,11 @@ def create_app(settings=None, judge=None, http_client=None):
                 ref_idx = await asyncio.to_thread(judge.prepare, ref)
                 rec.prepare_ms = ref_idx.prepare_ms
                 yield chunk(delta={'role': 'assistant', 'content': ''})
-                pipe = VerifyPipeline(judge, ref_idx, mode, action, rec)
+                pipe = VerifyPipeline(judge, ref_idx, mode, action, rec, stride=stride)
                 async for ev in pipe.run(_upstream_deltas(resp, meta)):
                     if ev.kind == 'text':
-                        yield chunk(delta={'content': ev.text})
+                        if ev.text:
+                            yield chunk(delta={'content': ev.text})
                     elif ev.kind == 'verdict':
                         yield chunk(verification=ev.info)
                     elif ev.kind == 'cut':
