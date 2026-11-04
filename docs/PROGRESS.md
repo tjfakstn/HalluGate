@@ -176,6 +176,7 @@
 - **11/04 L2 결과: L2-1 충족** — 근거+응답 p90 1,182토큰 → 2,048 입력에서 ModernBERT-base 21.7ms·large 28.0ms(p95, A100). 512토큰 초과 응답이 75%라 현재 판정기는 대부분 근거 일부만 봄. 후보 ① 학습 진행 가능
 - **11/04 I2 노트북 추가**: ModernBERT-large가 근거 전체 + 응답 처음부터 판정 지점까지(2,048토큰)를 보는 긴 문맥 판정기. 사전 기준과 I1·I2 동시 채택 시 선택 규칙을 I1 결과 전에 SSOT §6에 고정. smoke test `smoke_i2.py`
 - **11/04 I1 결과: 미채택(주 기준 I1-1 미달)** — cal-L 8토큰 원래 정답 0.507 → 0.447(−0.060, 신뢰구간 [−0.095, −0.023]), C1은 거의 같음(−0.007). 잘림은 42% → 0%로 없앴지만 성능은 내려감. dev-L(보고만) Summary 0.156 → 0.247, Data2txt 0.662 → 0.512. 배포 판정기는 F1 base 유지
+- **11/05 S4 1단계(서비스, I2 실행과 병행)**: 판정기 교체가 폴더 교체만으로 되도록 `load_judge`가 `judge_config.json`을 읽음(입력 방식 retrieval=F1 base / full=I2 노트북 형식, 간격별 임계값, 기본 간격). 재판정 간격을 tiktoken cl100k 토큰(문장 시작부터 s토큰, 학습 지점과 같음)으로 변경, 기본 정책 hold·8토큰·flag. `tool_calls`·`usage` 청크 통과(A10), fail-open(판정 오류·시간 초과)·비영어 검증 중단(`verified: false`, A12). F1 base 실제 가중치로 고정 예제 50개 점수 차 최대 0.000016(A11). 테스트 23 → 33개(+ 가중치 있을 때만 도는 일치 테스트 1개)
 - 11/04 저장소 복구: `544a841`에서 지워진 PROGRESS·RESEARCH_PLAN·빌더·노트북 49개 복구(`6c8f663`), judge.py fp32 수정 재반영(`ca8218b`). 10/21 커밋 `a1addb8`은 저장소에 없어 10/21~10/28 기록은 인계 문서(`docs/handoff/`)로 복원
 
 ---
@@ -196,7 +197,7 @@
 6. `Judge.judge_batch()`, `parity_fixture.json` 일치 테스트, 처리량 측정
 7. 사람 점검 30개(사용자, `r4/r4_human_audit.csv`)
 8. `docs/MODEL_CARD.md` → SSOT §4 교체, v1.0 동결
-- 그 뒤 S4(11/4~11/17): SPEC §9 S4 항목 — 토큰 단위 재판정, tool_calls·usage 통과, Claude 변환, 컬렉션·RAG, 재생성
+- 그 뒤 S4(11/4~11/17): ~~토큰 단위 재판정, tool_calls·usage 통과, 판정기 설정 파일, fail-open·언어 감지~~(11/05) → Claude 변환, 컬렉션·RAG, 재생성, 접근 토큰, `judge_batch`
 - S5(11/18~12/1): RAGTruth test 1회, Itkin·LettuceDetect·Claude/GPT 직접 판정과 비교. S6(12/2~12/15): 데모·보고서·SOFTCON
 
 **열린 문제**

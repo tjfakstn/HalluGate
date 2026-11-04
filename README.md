@@ -49,7 +49,7 @@ python mock_upstream.py --port 9000 &
 UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --lexical --port 8000 &
 
 # 학습 판정기로 실행
-JUDGE_MODEL_DIR=path/to/student_vark UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --port 8000 &
+JUDGE_MODEL_DIR=path/to/judge_base UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --port 8000 &
 
 # 종단 간 측정 (RAGTruth 필요)
 git clone --depth 1 https://github.com/ParticleMedia/RAGTruth.git
@@ -114,4 +114,4 @@ AGENTS.md / CLAUDE.md AI 코딩 에이전트 작업 규칙
 ## 데이터·모델
 
 - [RAGTruth](https://github.com/ParticleMedia/RAGTruth), [HaluEval](https://github.com/RUCAIBox/HaluEval), 기준 판정기 [MiniCheck](https://github.com/Liyan06/MiniCheck)
-- 학습된 판정기 가중치(`student_vark/`)는 저장소에 포함하지 않습니다.
+- 학습된 판정기 가중치(`judge_base/` 등)는 저장소에 포함하지 않습니다. 판정기 폴더의 `judge_config.json`이 입력 방식·임계값·재판정 간격을 정합니다(SPEC §4).

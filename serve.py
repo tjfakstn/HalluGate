@@ -1,6 +1,6 @@
 """게이트웨이 실행.
 
-  JUDGE_MODEL_DIR=student_vark UPSTREAM_BASE_URL=http://localhost:9000/v1 python serve.py --port 8000
+  JUDGE_MODEL_DIR=judge_base UPSTREAM_BASE_URL=http://localhost:9000/v1 python serve.py --port 8000
   (판정기 없이 파이프라인만 시험: --lexical)
 """
 import argparse

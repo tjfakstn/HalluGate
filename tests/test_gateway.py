@@ -63,7 +63,7 @@ def test_extract_tag_and_off():
 @pytest.fixture
 def gw(tmp_path):
     up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
-    s = Settings(upstream_base_url='http://mock/v1', metrics_path=str(tmp_path / 'm.jsonl'))
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path=str(tmp_path / 'm.jsonl'), stride_tokenizer='words')
     app = create_app(s, judge=LexicalJudge(threshold=0.5), http_client=up)
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://gw'), s
 
@@ -142,7 +142,7 @@ def live(tmp_path):
         return f'http://127.0.0.1:{port}'
 
     up = start(mock_upstream.app)
-    s = Settings(upstream_base_url=up + '/v1', metrics_path=str(tmp_path / 'm.jsonl'))
+    s = Settings(upstream_base_url=up + '/v1', metrics_path=str(tmp_path / 'm.jsonl'), stride_tokenizer='words')
     gw_url = start(create_app(s, judge=LexicalJudge(threshold=0.5, delay_ms=5)))
     yield gw_url, s
     for srv in servers:
@@ -336,3 +336,154 @@ async def test_live_stride_hold_reduces_wait(live):
         assert ''.join(v for _, k, v in ev if k == 't') == BAD_2ND
         firsts[stride] = next(t for t, k, _ in ev if k == 't')
     assert firsts[2] < firsts[0] - 60, firsts
+
+
+# ---------------- S4: 판정기 설정 파일, 토큰 단위 재판정, 통과 청크, fail-open ----------------
+def _tiny_bert(path, words):
+    from transformers import BertConfig, BertForSequenceClassification, BertTokenizerFast
+    (path / 'vocab.txt').write_text('\n'.join(['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]', '...', '.'] + words))
+    BertTokenizerFast(str(path / 'vocab.txt')).save_pretrained(path)
+    BertForSequenceClassification(BertConfig(vocab_size=len(words) + 7, hidden_size=16, num_hidden_layers=1,
+                                             num_attention_heads=2, intermediate_size=32, num_labels=1)
+                                  ).save_pretrained(path)
+
+
+def test_load_judge_reads_config_full_mode(tmp_path):
+    # I2 노트북 형식(input.retrieval = null) → 근거 전체 + 응답 앞부분 입력, 간격별 임계값, 기본 간격 8
+    from hallugate.judge import load_judge
+    _tiny_bert(tmp_path, 'the company was founded in seoul revenue billion dollars reported it'.split())
+    cfg = {'input': {'text_a': 'full reference', 'text_b': 'response prefix', 'retrieval': None}, 'max_len': 64,
+           'default': {'kind': '8', 'threshold': 'svc10_orig'}, 'threshold': 1.5,
+           'thresholds': {'end': {'svc10_orig': 0.5}, '8': {'svc10_orig': 1.5}, '4': {'svc10_orig': 2.5}}}
+    (tmp_path / 'judge_config.json').write_text(json.dumps(cfg))
+    j = load_judge(Settings(judge_model_dir=str(tmp_path), judge_device='cpu'))
+    assert j.mode == 'full' and j.default_stride == 8 and j.max_len == 64
+    assert (j.threshold_for(8), j.threshold_for(4), j.threshold_for(0), j.threshold_for(16)) == (1.5, 2.5, 0.5, 1.5)
+    ref = j.prepare(REF)
+    assert ref.emb is None and ref.text == REF                       # 근거 검색 없음
+    a = j.judge(ref, 'It reported revenue.', prior='The company was founded in 1998 in Seoul. ')
+    b = j.judge(ref, 'It reported revenue.')
+    assert a.score != b.score                                        # 응답 앞부분(prior)이 입력에 들어감
+    # 환경 변수로 임계값을 고정하면 간격별 임계값은 쓰지 않는다
+    j2 = load_judge(Settings(judge_model_dir=str(tmp_path), judge_device='cpu', judge_threshold=9.0))
+    assert j2.threshold_for(4) == 9.0
+
+
+def test_word_tokens_cover_text():
+    from hallugate.tokens import WordTokens
+    t = 'The company  was\nfounded. '
+    offs = WordTokens().offsets(t)
+    assert ''.join(t[a:b] for a, b in offs) == t and offs[0] == (0, 3)
+
+
+class RecordingJudge(LexicalJudge):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.calls = []
+
+    def judge(self, ref, text, prior='', threshold=None):
+        self.calls.append((text, prior, threshold))
+        return super().judge(ref, text, prior, threshold)
+
+
+def _gw_with(tmp_path, judge, **kw):
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path=str(tmp_path / 'm.jsonl'), stride_tokenizer='words', **kw)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(s, judge=judge, http_client=up)),
+                             base_url='http://gw'), s
+
+
+@pytest.mark.asyncio
+async def test_token_stride_points_and_prior(tmp_path):
+    # 문장 시작부터 토큰 2개마다 앞부분 판정, 판정 텍스트는 토큰 경계에서 끝나고, prior는 그 문장 앞까지의 응답
+    j = RecordingJudge(threshold=2.0)                                   # 환각 판정 없음
+    client, _ = _gw_with(tmp_path, j)
+    b = body(GOOD, 'hold'); b['verification']['stride'] = 2
+    text, ev, _ = await run(client, b)
+    assert text == GOOD
+    prefixes = [(t, p) for t, p, _ in j.calls]
+    assert ('The company', '') in prefixes and ('The company was founded', '') in prefixes
+    assert ('It reported', 'The company was founded in 1998 in Seoul. ') in prefixes
+    assert ('The company was', '') not in prefixes                   # 홀수 토큰 지점은 판정하지 않음
+
+
+@pytest.mark.asyncio
+async def test_default_stride_and_threshold_from_judge(tmp_path):
+    class J(RecordingJudge):
+        default_stride = 4
+        def threshold_for(self, stride, key=None):
+            return {0: 0.7, 4: 0.6}[stride]
+    j = J()
+    client, s = _gw_with(tmp_path, j)
+    b = body(GOOD, 'hold'); b['verification'].pop('mode')
+    r = await client.post('/v1/chat/completions', json=b)
+    assert r.headers['x-verification-mode'] == 'hold' and r.headers['x-verification-stride'] == '4'
+    assert {th for _, _, th in j.calls} == {0.6}
+    rec = json.loads(open(s.metrics_path).read().splitlines()[-1])
+    assert rec['threshold'] == 0.6 and rec['verified'] is True
+    h = (await client.get('/health')).json()
+    assert h['stride'] == 4 and h['threshold'] == 0.6 and h['mode'] == 'hold'
+    r = await client.post('/v1/chat/completions', json=body(GOOD, 'hold', stream=False))
+    assert r.json()['verification']['threshold'] == 0.7             # 비스트리밍은 문장 끝 임계값
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['pass', 'hold'])
+async def test_tool_calls_and_usage_pass_through(gw, mode):
+    client, _ = gw
+    b = body(GOOD, mode); b['mock_tool_call'] = 'lookup'; b['stream_options'] = {'include_usage': True}
+    r = await client.post('/v1/chat/completions', json=b)
+    chunks = [json.loads(l[5:]) for l in r.text.splitlines() if l.startswith('data:') and not l.endswith('[DONE]')]
+    text = ''.join(c['choices'][0]['delta'].get('content') or '' for c in chunks if c['choices'])
+    tools = [c['choices'][0]['delta']['tool_calls'][0] for c in chunks if c['choices'] and c['choices'][0]['delta'].get('tool_calls')]
+    finish = [c['choices'][0]['finish_reason'] for c in chunks if c['choices'] and c['choices'][0]['finish_reason']]
+    assert text == GOOD
+    assert tools[0]['function']['name'] == 'lookup' and tools[1]['function']['arguments'] == '{"q": 1}'
+    assert finish == ['tool_calls']
+    assert chunks[-1]['usage']['total_tokens'] == 10 and chunks[-1]['choices'] == []   # usage는 맨 끝
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['pass', 'hold'])
+async def test_fail_open_on_judge_error(tmp_path, mode):
+    client, s = _gw_with(tmp_path, LexicalJudge(threshold=0.5, fail=lambda t: 'rockets' in t))
+    text, ev, finish = await run(client, body(BAD_2ND, mode, 'cut'))
+    assert text == BAD_2ND and finish == 'stop'                      # 본문은 끝까지, 끊지 않음
+    vs = [e for k, e in ev if k == 'v']
+    un = [v for v in vs if v.get('kind') == 'unverified']
+    assert len(un) == 1 and un[0]['verified'] is False and un[0]['reason'] == 'judge_error'
+    assert [v['sentence_idx'] for v in vs if v.get('kind') == 'sentence'] == [0]   # 장애 뒤로는 판정 안 함
+    rec = json.loads(open(s.metrics_path).read().splitlines()[-1])
+    assert rec['verified'] is False and rec['unverified_reason'] == 'judge_error'
+
+
+@pytest.mark.asyncio
+async def test_fail_open_on_timeout(tmp_path):
+    client, _ = _gw_with(tmp_path, LexicalJudge(threshold=0.5, delay_ms=300), judge_timeout_ms=50)
+    text, ev, _ = await run(client, body(BAD_2ND, 'hold'))
+    assert text == BAD_2ND
+    assert [e['reason'] for k, e in ev if k == 'v' and e.get('kind') == 'unverified'] == ['judge_timeout']
+
+
+@pytest.mark.asyncio
+async def test_non_english_unverified(gw):
+    client, _ = gw
+    ko = '이 회사는 1998년 서울에서 설립되었다. 2023년 매출은 20억 달러였다.'
+    text, ev, _ = await run(client, body(ko, 'hold'))
+    assert text == ko
+    vs = [e for k, e in ev if k == 'v']
+    assert len(vs) == 1 and vs[0]['reason'] == 'non_english'
+    r = await client.post('/v1/chat/completions', json=body(ko, 'hold', stream=False))
+    v = r.json()['verification']
+    assert v['verified'] is False and v['reason'] == 'non_english' and v['sentences'] == []
+
+
+# 실제 배포 가중치로 고정 예제 점수 일치(A11). 가중치는 저장소에 없으므로 JUDGE_PARITY_DIR을 지정했을 때만 실행
+@pytest.mark.skipif(not os.environ.get('JUDGE_PARITY_DIR'), reason='JUDGE_PARITY_DIR 미지정 (가중치 필요)')
+def test_parity_fixture():
+    from hallugate.judge import load_judge
+    d = os.environ['JUDGE_PARITY_DIR']
+    fx = json.load(open(os.path.join(d, 'parity_fixture.json')))
+    j = load_judge(Settings(judge_model_dir=d, judge_device='cpu'))
+    diffs = [abs(j.judge(j.prepare(it['reference']), it['text']).score - it['score_cpu_fp32']) for it in fx['items']]
+    assert max(diffs) <= 0.2, max(diffs)

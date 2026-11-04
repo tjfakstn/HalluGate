@@ -2,6 +2,7 @@ fastapi
 uvicorn
 httpx
 pysbd
+tiktoken
 torch
 transformers
 sentence-transformers

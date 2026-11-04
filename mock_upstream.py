@@ -4,6 +4,8 @@
   mock_response : 흘려보낼 답변 텍스트 (없으면 마지막 user 메시지를 되돌려줌)
   mock_ttft_ms  : 첫 토큰까지 지연 (기본 300ms)
   mock_token_ms : 토큰 간 간격 (기본 25ms ≈ 초당 40토큰, 상용 API와 비슷한 속도)
+  mock_tool_call: 함수 이름. 본문 뒤에 tool_calls 청크 2개를 보내고 finish_reason=tool_calls
+  stream_options.include_usage=true 이면 마지막에 usage 청크(choices: [])를 보낸다 (OpenAI와 같은 형식)
 
 토큰 단위: 기본은 단어. 환경 변수 MOCK_TOKENIZER=tiktoken 이면 GPT 토큰(cl100k_base) 단위.
 
@@ -67,7 +69,16 @@ async def chat(request: Request):
         for tok in _tokens(text):
             yield c({'content': tok})
             await asyncio.sleep(gap)
-        yield c({}, 'stop')
+        tool = b.get('mock_tool_call')                    # 시험용: 본문 뒤에 도구 호출 청크
+        if tool:
+            yield c({'tool_calls': [{'index': 0, 'id': 'call_mock', 'type': 'function',
+                                     'function': {'name': tool, 'arguments': ''}}]})
+            yield c({'tool_calls': [{'index': 0, 'function': {'arguments': '{"q": 1}'}}]})
+        yield c({}, 'tool_calls' if tool else 'stop')
+        if (b.get('stream_options') or {}).get('include_usage'):
+            yield 'data: ' + json.dumps({'id': cid, 'object': 'chat.completion.chunk', 'created': created, 'model': model,
+                                         'choices': [], 'usage': {'prompt_tokens': 3, 'completion_tokens': 7,
+                                                                  'total_tokens': 10}}) + '\n\n'
         yield 'data: [DONE]\n\n'
 
     return StreamingResponse(gen(), media_type='text/event-stream')
