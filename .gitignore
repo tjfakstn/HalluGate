@@ -1,3 +1,18 @@
+# AGENTS.md §E: 데이터셋, 모델 가중치, 측정 산출물, 비밀 키는 커밋하지 않는다
+RAGTruth/
+HaluEval/
+student_*/
+judge_base/
+judge_mini/
+judge_i1/
+judge_i2/
+*.safetensors
+*.jsonl
+bench_*/
+.env
+.env.*
 
 __pycache__/
 *.pyc
+.pytest_cache/
+.DS_Store
