@@ -13,12 +13,20 @@ hallugate는 서비스와 LLM API 사이에 위치하는 **OpenAI Chat Completio
 요청에 포함된 근거 문서를 기준으로, LLM 응답을 **스트리밍 중에 문장 단위로** 검증한다.
 
 ```
-서비스 ──요청(근거 문서 포함)──▶ hallugate ──요청(검증 필드 제거)──▶ LLM API
+[관리자/개발자] ── 문서 등록 API ──▶ 컬렉션 저장소 (조각 + 임베딩)
+                                          │
+서비스 ──요청(+collection 또는 context)──▶ hallugate ──요청(근거 삽입, 검증 필드 제거)──▶ LLM API (Claude / OpenAI 형식)
        ◀──본문 청크 + 판정 청크──   │   ◀──────── 토큰 스트림 ────────
-                                   ├─ IncrementalSplitter : 토큰 → 문장
-                                   ├─ Judge               : (근거, 문장) → 점수
-                                   └─ VerifyPipeline      : 정책(pass/hold, flag/cut)에 따라 전달
+                                   ├─ Retriever        : 질문 → 컬렉션 근거 조각 N개 (📋)
+                                   ├─ IncrementalSplitter
+                                   ├─ Judge             : (근거 조각, 문장 앞부분) → 점수
+                                   └─ VerifyPipeline    : pass/hold(8토큰), flag/cut/regenerate(📋)
 ```
+
+**RAG 게이트웨이 (📋 S4, SSOT §7 10/28)**: 근거 문서를 서비스가 매번 요청에 담는 대신, 관리자·개발자가 게이트웨이의 컬렉션에
+미리 등록해 둘 수 있다. 요청이 `verification.collection`을 지정하면 게이트웨이가 마지막 사용자 질문으로 컬렉션을 검색하고,
+찾은 근거를 시스템 메시지에 넣어 LLM을 호출한 뒤 **같은 근거로** 응답을 판정한다. 이렇게 하면 LLM이 본 근거와 판정 근거가 항상 같다.
+요청에 근거를 직접 담는 기존 방식(검증만)도 그대로 지원한다.
 
 ### 목표
 - G1. 서비스 코드는 `base_url` 변경만으로 적용 가능해야 한다.
@@ -29,7 +37,7 @@ hallugate는 서비스와 LLM API 사이에 위치하는 **OpenAI Chat Completio
 
 ### 비목표
 - 근거 문서 없는 사실성 검증, 웹 검색 기반 검증
-- 응답 수정·재생성 (환각 문장을 고쳐 쓰기)
+- 응답 문장 고쳐 쓰기(교정 모델). 단, hold에서 아직 나가지 않은 문장의 재생성은 지원(§5.2 📋)
 - 인증·과금·레이트 리밋 (운영용 게이트웨이 기능)
 
 ## 2. API
@@ -47,7 +55,9 @@ OpenAI Chat Completions 요청을 그대로 받는다. 추가 필드 하나를 �
     "context": "근거 문서" | ["문서1", "문서2"],
     "mode": "pass" | "hold" | "off",     // 기본: 서버 설정 VERIFY_MODE (pass)
     "action": "flag" | "cut",            // 기본: 서버 설정 VERIFY_ACTION (flag)
-    "stride": 4                          // 선택. 문장 앞부분 재판정 간격(업스트림 조각 수). 0이면 끔. 기본: JUDGE_STRIDE
+    "stride": 4,                         // 선택. 문장 앞부분 재판정 간격(현재 업스트림 조각 수, 📋 tiktoken cl100k 토큰으로 변경). 0이면 끔. 기본: JUDGE_STRIDE
+    "collection": "id",                  // 📋 선택. 등록된 컬렉션에서 근거 검색 + 프롬프트 삽입 (§2.5, §2.6)
+    "regenerate": true | false           // 📋 선택. hold에서 환각 문장 재생성 (§5.2). 기본 false
   }
 }
 ```
@@ -55,7 +65,8 @@ OpenAI Chat Completions 요청을 그대로 받는다. 추가 필드 하나를 �
 **근거 문서 결정 순서** (`hallugate/context.py`)
 1. `verification.context` (리스트면 빈 줄로 이어 붙임)
 2. 모든 메시지 본문 안의 `<context>…</context>` 태그 내용
-3. 둘 다 없으면 `mode = off` (검증 없이 전달)
+3. 📋 `verification.collection` (컬렉션 검색, §2.6)
+4. 모두 없으면 `mode = off` (검증 없이 전달)
 
 **전달 규칙**
 - `verification` 필드는 업스트림에 보내기 전에 제거한다 (실제 API는 모르는 필드를 거부함).
@@ -98,6 +109,23 @@ cut 발생 시 종료 청크에 `{"cut": true, "sentence_idx": n}`이 함께 실
 ### 2.4 `GET /health` ✅
 `{"ok": true, "judge": "<판정기 클래스>", "mode": "...", "action": "..."}`
 
+### 2.5 문서 등록 API 📋
+- `POST /v1/collections/{id}/documents` — 텍스트 문서 등록. 게이트웨이가 조각으로 나누고 임베딩해 저장한다.
+- `GET /v1/collections/{id}/documents` — 등록된 문서 목록.
+- `DELETE /v1/collections/{id}/documents/{doc_id}` — 문서 삭제.
+- 저장소는 `Store` 인터페이스로 감싼다(처음 구현은 SQLite + 임베딩 배열). 판정기와 마찬가지로 나중에 별도 서비스로 분리할 수 있게 한다.
+- 접근 토큰 하나로 보호한다.
+
+### 2.6 프롬프트 삽입 📋
+- `verification.collection`이 있으면 마지막 사용자 메시지로 컬렉션을 검색해 근거 조각을 고른다.
+- 시스템 메시지에 "아래 근거만 사용해 답하라" 지시와 근거 블록을 넣는다. 서비스가 보낸 메시지는 바꾸지 않는다.
+- 판정기의 근거 검색은 **이 근거 조각 안에서만** 한다(LLM에 넣은 근거 = 판정 근거).
+- 판정 청크에 사용한 근거 조각 목록(`evidence`)을 싣는다.
+
+### 2.7 업스트림 📋
+- `UPSTREAM_PROVIDER=openai|anthropic`. OpenAI 형식은 그대로 통과, Claude는 Messages API로 변환해 호출하고 응답을 OpenAI 청크 형식으로 되돌린다.
+- 스트리밍의 `tool_calls`·`usage` 청크는 판정 없이 그대로 통과한다. (현재는 `delta.content`만 넘겨 이 청크가 버려짐 — 버그)
+
 ## 3. 문장 분할 — `IncrementalSplitter` ✅
 
 - pysbd(영어, `char_span`)를 사용한다. 버퍼에서 **다음 문장의 시작이 확인되면** 앞 문장을 완성으로 본다.
@@ -123,6 +151,11 @@ class Judge:
 | `LexicalJudge` | 테스트·데모 전용. 근거에 없는 단어 비율. **판별력 없음, 측정에 사용 금지** |
 
 - `hallucinated = score >= JUDGE_THRESHOLD` (기본 0.0, 📋 S4에서 보정 — 0.0은 문장 재현율 0.22로 너무 보수적, SSOT §5 S3)
+- 📋 운영 판정기를 F1 base(DeBERTa-v3-base)로 교체(모델 v1.0 동결 후 ✅). `judge_config.json`(임계값·재판정 간격·임베더·k)을 읽는다. 배포 기본값은 8토큰·임계값 3.906(SSOT §5 F1).
+- 📋 `Judge.judge_batch()`: 여러 판정을 한 번에 처리.
+- 📋 재판정 간격 단위는 **tiktoken cl100k 토큰**. 현재는 업스트림 조각 수라 학습·임계값과 맞지 않는다(Claude는 조각당 약 5토큰).
+- 📋 영어가 아닌 응답은 판정을 끄고 `verified: false`.
+- 📋 판정기 장애·시간 초과 시 본문을 그대로 전달하고 `verified: false`(fail-open).
 - 서버 시작 시 판정기를 예열한다 (근거 준비 1회 + 판정 3회) ✅
 - 모델 하나를 여러 요청이 공유하므로 `StudentJudge`는 락으로 직렬화한다. 판정은 `asyncio.to_thread`로 이벤트 루프 밖에서 실행한다.
 
@@ -155,6 +188,14 @@ class Judge:
 - 조각 수는 업스트림 SSE 조각 기준이다(상용 API에서는 대략 토큰 1개, 가짜 LLM에서는 단어 1개).
 
 - 📋 S4: 위험도에 따라 재판정 간격과 보류 여부를 바꾸는 적응형 정책.
+- 📋 기본 정책 변경(SSOT §7 10/28 A6): `VERIFY_MODE=hold`, `JUDGE_STRIDE=8`(토큰), `VERIFY_ACTION=flag`. `cut`은 기본값에서 제외.
+
+### 5.2 재생성 (`regenerate`) 📋
+hold에서 환각으로 판정된 문장은 아직 사용자에게 나가지 않았으므로 버리고, "근거만 사용" 지시와 함께 그 지점부터 이어 쓰기를 **1회** 재요청한다.
+- 재생성 여부는 표시용보다 보수적인 임계값(예: cal-L 멀쩡한 응답 5%)으로 정한다.
+- 재생성한 문장도 다시 판정하고, 또 환각이면 표시만(flag) 한다.
+- 해소율·추가 지연을 측정 기록에 남긴다.
+- 불변식 G2는 "사용자에게 전달된 본문 = 최종 업스트림 본문 중 버리지 않은 부분"으로 해석한다(버린 문장은 전달되지 않음).
 
 ## 6. 측정 기록 ✅
 
@@ -203,12 +244,16 @@ class Judge:
 | A6 | GPU 판정 p95 ≤ 30ms, pass 판정 전달 p95 ≤ 50ms | ✅ 20.6ms / 21.1ms |
 | A8 | `stride`를 켜도 본문 보존 100%, hold에서 앞부분이 안전 판정되면 문장 완성 전에 그 부분이 전달됨 | ✅ 테스트 |
 | A7 | 운영 임계값에서 멀쩡한 응답 오표시율과 환각 응답 탐지율이 서비스 요구를 만족 (기준은 S4에서 정의) | 📋 임계값 0에서 6% / 31% |
+| A9 | 컬렉션 근거로 생성·검증할 때 본문 보존 100%, LLM에 넣은 근거 = 판정 근거 | 📋 |
+| A10 | 스트리밍의 `tool_calls`·`usage` 청크 보존 | 📋 |
+| A11 | 고정 예제(`parity_fixture.json`) 점수 일치 \|Δlogit\| ≤ 0.2 | 📋 |
 
 ## 9. 로드맵
 
 | 단계 | 내용 |
 |---|---|
 | S3 | ~~학습 판정기로 A5·A6 측정, CPU 판정 속도 측정~~ ✅, 중간보고 |
-| S4 | 임계값 보정, 문장보다 짧은 검증 단위(부분 문장 판정 성능 측정 포함), 위험 신호 기반 가변 단위·정책, 상용 API 연결 |
+| F | 모델 v1.0 동결: F1 base 판정기, `judge_config.json` v1.0(8토큰·서비스 10% 임계값, 재생성용 임계값), `judge_batch`, 고정 예제 일치 |
+| S4 | 재판정 간격 토큰 단위, `tool_calls`·`usage` 통과(A10), Claude Messages API 변환(§2.7), 컬렉션 API·저장소·검색·프롬프트 삽입·`evidence`(§2.5·2.6, A9), 재생성(§5.2), 언어 감지, fail-open, 접근 토큰, 판정 묶음 처리, 배포 후 실제 LLM 속도로 종단 간 재측정 |
 | S5 | RAGTruth test 1회 개방 최종 평가, 기존 도구의 고정 설정(NeMo Guardrails의 chunk 200 등)과 비교 |
 | S6 | 데모 (서비스 예제 + 판정 시각화), 보고서, SOFTCON |
