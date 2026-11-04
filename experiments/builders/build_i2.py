@@ -259,16 +259,27 @@ def to_drive():
         print('드라이브 복사 실패:', e); ok = False
     print(f'드라이브 저장 {"확인" if ok else "실패 — 마지막 셀 zip을 꼭 내려받을 것"}')
     return ok
+def fix_cfg(d):
+    # 초기 NLI 모델 설정의 problem_type='single_label_classification'이 num_labels=1 저장본에 남으면
+    # 새 transformers가 다시 불러올 때 거부한다. 손실은 직접 계산하므로 problem_type을 지운다.
+    p = os.path.join(d, 'config.json')
+    if os.path.isfile(p):
+        c = json.load(open(p))
+        if c.pop('problem_type', None) is not None:
+            json.dump(c, open(p, 'w'), indent=2); print('config.json problem_type 제거:', d)
 def load_model(path, **kw):
+    fix_cfg(path)
     return AutoModelForSequenceClassification.from_pretrained(path, attn_implementation='sdpa', reference_compile=False, **kw).to(DEVICE)
 
 DD = os.path.join(I2_DIR, 'judge_i2')
 if not has_weights(D) and has_weights(DD):
     shutil.copytree(DD, D, dirs_exist_ok=True); print('드라이브 저장본 사용')
+fix_cfg(DD)
 if not has_weights(D):
     t0 = time.perf_counter()
     model = load_model(I2_INIT, num_labels=1, ignore_mismatched_sizes=True)
     model, hist = train_i2(tok, model, 42)
+    model.config.problem_type = None
     os.makedirs(D, exist_ok=True); tok.save_pretrained(D); model.half().save_pretrained(D)
     pd.DataFrame(hist, columns=['step', 'calsub_recall8']).to_csv(os.path.join(D, 'hist.csv'), index=False)
     print(f'학습 {(time.perf_counter() - t0) / 60:.0f}분')
