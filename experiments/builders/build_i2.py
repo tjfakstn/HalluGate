@@ -242,6 +242,7 @@ md("""## 9. 학습·저장 (시드 42)
 
 로컬에 fp16으로 먼저 저장하고 드라이브에 복사·크기 검증. 점수는 저장한 파일을 다시 불러 매긴다. 채점은 조각마다 저장해 끊겨도 이어서 한다.""")
 code(r"""
+from transformers import AutoConfig
 LOCAL = '/content/i2_local'
 D = os.path.join(LOCAL, 'judge_i2')
 os.makedirs(LOCAL, exist_ok=True)
@@ -268,8 +269,13 @@ def fix_cfg(d):
         if c.pop('problem_type', None) is not None:
             json.dump(c, open(p, 'w'), indent=2); print('config.json problem_type 제거:', d)
 def load_model(path, **kw):
+    # 새 transformers는 reference_compile을 모델 인자로 받지 않는다 → 설정(config)에 넣는다
     fix_cfg(path)
-    return AutoModelForSequenceClassification.from_pretrained(path, attn_implementation='sdpa', reference_compile=False, **kw).to(DEVICE)
+    ckw = {k: kw.pop(k) for k in ['num_labels'] if k in kw}
+    cfg = AutoConfig.from_pretrained(path, **ckw)
+    cfg.problem_type = None
+    if hasattr(cfg, 'reference_compile'): cfg.reference_compile = False
+    return AutoModelForSequenceClassification.from_pretrained(path, config=cfg, attn_implementation='sdpa', **kw).to(DEVICE)
 
 DD = os.path.join(I2_DIR, 'judge_i2')
 if not has_weights(D) and has_weights(DD):
