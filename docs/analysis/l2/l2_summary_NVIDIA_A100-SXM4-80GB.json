@@ -1,0 +1,10 @@
+{
+ "gpu": "NVIDIA A100-SXM4-80GB",
+ "L_need": 2048,
+ "p90_total": 1182.0,
+ "gate_pass": true,
+ "pass_models": [
+  "ModernBERT-base",
+  "ModernBERT-large"
+ ]
+}
