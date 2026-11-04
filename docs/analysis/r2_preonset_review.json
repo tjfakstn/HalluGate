@@ -1,0 +1,581 @@
+{
+ "desc": "R2 후속: cal-L, B 문장 끝 ARL0=100 임계값. H2 = 환각 응답에서 정답 시작보다 2문장 이상 앞 첫 경보(203개 중 30개 무작위), C = 멀쩡한 응답의 첫 경보(505개 중 20개). 그룹을 가리고 섞어 LLM 판정자 5개(Claude 하위 에이전트)가 RAGTruth 정의로 판정. 시드 random.Random(7).",
+ "cases": [
+  {
+   "case": "c00",
+   "group": "C",
+   "ragtruth_id": "10471",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Ambience casual: true; review 1 says 'I do like the indoor seating' and 'Portions were ample.'",
+   "labeled_spans": []
+  },
+  {
+   "case": "c01",
+   "group": "C",
+   "ragtruth_id": "1499",
+   "task": "Summary",
+   "verdict": "AMBIGUOUS",
+   "offending_phrase": "highlights the growing divide between conservatives and liberals on LGBT issues",
+   "reason": "'May harm his presidential aspirations' loosely matches 'may not be enough to get him over this political hump' / 'may be toxic now', but the source never describes a 'growing divide' between conservatives and liberals. It is an interpretive generalization, not a stated fact.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c02",
+   "group": "C",
+   "ragtruth_id": "9385",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Hours are 11:30-22:00 Sun-Thu and 11:30-23:00 Fri-Sat, every day of the week.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c03",
+   "group": "C",
+   "ragtruth_id": "10297",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Hours are 11:0-0:0 Mon-Thu and 11:0-2:0 Fri/Sat, which matches the sentence.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c04",
+   "group": "H2",
+   "ragtruth_id": "7901",
+   "task": "Data2txt",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "a popular local restaurant ... known for its delicious pizza",
+   "reason": "Nothing in the source says the place is popular (it has 2.5 stars and two 1-star reviews), and nothing says it is 'known for' its pizza. Only individual reviewers call the pizza tasty or great. The casual atmosphere is supported (casual: true).",
+   "labeled_spans": [
+    "mix of booths and tables.",
+    "the service can be slow"
+   ]
+  },
+  {
+   "case": "c05",
+   "group": "H2",
+   "ragtruth_id": "2903",
+   "task": "Summary",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Source: 'Walter Scott was stopped by Officer Michael Slager for a broken taillight, and within minutes Scott was dead' in North Charleston, South Carolina. The white officer and unarmed black man come from the article's framing.",
+   "labeled_spans": [
+    "The police department has since released data showing that black drivers are disproportionately stopped and searched compared to white drivers"
+   ]
+  },
+  {
+   "case": "c06",
+   "group": "C",
+   "ragtruth_id": "14903",
+   "task": "QA",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Passage 3: 'Birds do not have a diaphragm... Muscles in the chest cause the sternum to be pushed outward. This creates a negative pressure in the air sacs, causing air to enter the respiratory system.'",
+   "labeled_spans": []
+  },
+  {
+   "case": "c07",
+   "group": "H2",
+   "ragtruth_id": "3651",
+   "task": "Summary",
+   "verdict": "AMBIGUOUS",
+   "offending_phrase": "living with mast cell disease since she was 16",
+   "reason": "Age 21 and Easley, SC are supported. The source only says her first serious allergic reaction came 'shortly before her 16th birthday' and that she was diagnosed years later; it never gives an onset age for the disease, and she had health problems earlier. 'Since 16' is therefore a loose inference.",
+   "labeled_spans": [
+    "even pursuing her passion for taekwondo."
+   ]
+  },
+  {
+   "case": "c08",
+   "group": "H2",
+   "ragtruth_id": "11561",
+   "task": "Data2txt",
+   "verdict": "AMBIGUOUS",
+   "offending_phrase": "located within the Santa Barbara Zoo, offering a variety of meals and snacks",
+   "reason": "Reviews do place it at a zoo ('a restaurant at a zoo', 'Boo on the Zoo') and the city is Santa Barbara. However, the proper name 'Santa Barbara Zoo' never appears, and 'variety of meals and snacks' is a vague generalization from the burgers, fries, hot dog and beer mentioned.",
+   "labeled_spans": [
+    "has a casual atmosphere",
+    "free Wi-Fi"
+   ]
+  },
+  {
+   "case": "c09",
+   "group": "C",
+   "ragtruth_id": "7218",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Hours: Mon-Fri 9:0-20:0, Sat 9:0-19:0, Sun 10:0-18:0. Every claim in the sentence matches.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c10",
+   "group": "C",
+   "ragtruth_id": "1889",
+   "task": "Summary",
+   "verdict": "AMBIGUOUS",
+   "offending_phrase": "a popular Korean stew",
+   "reason": "The source supports the unusual history: it 'dates back to the scarce years of the Korean War' and used U.S. Army rations. It never says the stew is 'popular', though it calls it 'a storied hangover cure', so this is a mild, unverified generalization.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c11",
+   "group": "H2",
+   "ragtruth_id": "8292",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "The hours field lists Wednesday through Sunday as '17:0-23:0', which is 5 pm to 11 pm on those days.",
+   "labeled_spans": [
+    "relaxed atmosphere,"
+   ]
+  },
+  {
+   "case": "c12",
+   "group": "C",
+   "ragtruth_id": "9848",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "The attributes include \"OutdoorSeating\": true and \"WiFi\": \"free\".",
+   "labeled_spans": []
+  },
+  {
+   "case": "c13",
+   "group": "H2",
+   "ragtruth_id": "6096",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "The categories list 'Pizza', 'Italian', 'Sandwiches' and 'Beer, Wine & Spirits', and the name says 'Pizzeria'. Reading 'Italian' as 'other Italian dishes' is a reasonable paraphrase.",
+   "labeled_spans": [
+    "it doesn't have a music ambiance"
+   ]
+  },
+  {
+   "case": "c14",
+   "group": "H2",
+   "ragtruth_id": "8930",
+   "task": "Data2txt",
+   "verdict": "AMBIGUOUS",
+   "offending_phrase": "deli sandwiches",
+   "reason": "The categories 'Delis' and 'Greek' support deli food and Greek cuisine. 'Sandwiches' is never named, though; the reviews mention only gyros, so 'deli sandwiches' is an inference from the category.",
+   "labeled_spans": [
+    "Google",
+    "popular and well-regarded"
+   ]
+  },
+  {
+   "case": "c15",
+   "group": "C",
+   "ragtruth_id": "580",
+   "task": "Summary",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "police are reviewing the footage to determine the exact number of perpetrators and their movements",
+   "reason": "The source contradicts this. Police said they 'could not confirm that it was footage from the Hatton Garden robbery and that officers have not seen that particular video'. The count of at least six people came from the Daily Mirror's reading of the footage, not from police.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c16",
+   "group": "H2",
+   "ragtruth_id": "3256",
+   "task": "Summary",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "The source says he was 'caught after a brief chase', was 'convicted of larceny, conspiracy...', spent '22 months in jail', and said 'Jail was the catapult for me'.",
+   "labeled_spans": [
+    "dropped out of high school"
+   ]
+  },
+  {
+   "case": "c17",
+   "group": "H2",
+   "ragtruth_id": "2691",
+   "task": "Summary",
+   "verdict": "AMBIGUOUS",
+   "offending_phrase": "dehumanizing",
+   "reason": "Bryant calls the term 'repulsive and... offensive', and Stokes and Bryant object to it being used for 'children'. That supports 'offensive' and the focus on children. No one in the source uses 'dehumanizing', so it is a mild added characterization; the comparison to the n-word makes it plausible.",
+   "labeled_spans": [
+    "Others have defended the use of the term, including former NFL player Richard Sherman,"
+   ]
+  },
+  {
+   "case": "c18",
+   "group": "H2",
+   "ragtruth_id": "9343",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "The hours are Tuesday to Friday '16:0-1:0' and Saturday and Sunday '10:0-1:0', which matches 4 PM to 1 AM on weekdays and 10 AM to 1 AM on weekends, with Monday closed.",
+   "labeled_spans": [
+    "hosting live performances",
+    "some customers noted that not all acts were equally impressive"
+   ]
+  },
+  {
+   "case": "c19",
+   "group": "H2",
+   "ragtruth_id": "8929",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "The hours field lists Monday through Saturday as '10:0-17:0'.",
+   "labeled_spans": [
+    "Customers have mentioned the absence of certain amenities such as garage and street parking,",
+    "a popular local spot"
+   ]
+  },
+  {
+   "case": "c20",
+   "group": "C",
+   "ragtruth_id": "1837",
+   "task": "Summary",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Source: Corliss 'illuminated Time magazine's coverage of cinema for 35 years, died Thursday night... He was 71.' All claims match.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c21",
+   "group": "H2",
+   "ragtruth_id": "7041",
+   "task": "Data2txt",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "located in downtown Santa Barbara",
+   "reason": "Source gives only '418 State St, Santa Barbara' and a review mentions 'lower State Street'; 'downtown' is never stated, so the location detail is unsupported.",
+   "labeled_spans": [
+    "a great spot for both casual dates and larger groups",
+    "parking options",
+    "features comfortable indoor and outdoor seating areas"
+   ]
+  },
+  {
+   "case": "c22",
+   "group": "H2",
+   "ragtruth_id": "8543",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "city: Goleta, state: CA; categories include Barbeque and Mexican; Ambience casual: true supports 'casual dining establishment'.",
+   "labeled_spans": [
+    "with extended hours on weekends."
+   ]
+  },
+  {
+   "case": "c23",
+   "group": "H2",
+   "ragtruth_id": "15575",
+   "task": "QA",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Generic framing sentence; passages show HALT is a design-phase test for design weaknesses and HASS is a production screen, i.e., different purposes. No specific unsupported fact.",
+   "labeled_spans": [
+    "HALT uses a higher level of stress than HASS",
+    "HASS uses a lower level of stress,"
+   ]
+  },
+  {
+   "case": "c24",
+   "group": "H2",
+   "ragtruth_id": "5932",
+   "task": "Data2txt",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "open Monday through Sunday from 7:00 AM to 10:00 PM",
+   "reason": "Hours show Friday and Saturday are 7:0-23:0 (until 11 PM), contradicting a uniform 7 AM-10 PM schedule. The 4.0 rating is correct.",
+   "labeled_spans": [
+    "However, other reviewers have had more positive experiences, praising the hotel's location and ambiance. One reviewer noted that the hotel's romantic atmosphere made it a great spot for couples."
+   ]
+  },
+  {
+   "case": "c25",
+   "group": "H2",
+   "ragtruth_id": "2900",
+   "task": "Summary",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Source: 'Walter Scott was stopped by Officer Michael Slager for a broken taillight' in North Charleston, SC, and within minutes Scott was dead; the opening frames it as a white officer killing an unarmed black man and calls such stops 'routine stops'.",
+   "labeled_spans": [
+    "there were protests against police brutality."
+   ]
+  },
+  {
+   "case": "c26",
+   "group": "H2",
+   "ragtruth_id": "2918",
+   "task": "Summary",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Source: Gates 'stands accused of scrubbing part of a segment in his PBS documentary series \"Finding Your Roots\" because the actor Ben Affleck put pressure on him', and the segment was about a slaveholding ancestor. The 'Jr.' suffix and 'host' label are trivial additions that don't change the claim.",
+   "labeled_spans": [
+    "Others have also chimed in, with former president Bill Clinton expressing disappointment in the situation, saying, \"If there's anything we need now is more information about the complex origins of our nation.\""
+   ]
+  },
+  {
+   "case": "c27",
+   "group": "H2",
+   "ragtruth_id": "6579",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "business_stars 3.5; OutdoorSeating true; WiFi 'free'; RestaurantsReservations true.",
+   "labeled_spans": [
+    "one reviewer found their meal to be overcooked."
+   ]
+  },
+  {
+   "case": "c28",
+   "group": "H2",
+   "ragtruth_id": "3653",
+   "task": "Summary",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "a rare condition",
+   "reason": "Source supports age 21, Easley SC, and mast cell disease (mast cells act abnormally, causing allergic reactions and many symptoms), but it never says the condition is rare; that prevalence claim is unsupported.",
+   "labeled_spans": [
+    "the family hopes for further research and awareness to help improve Brynn's quality of life."
+   ]
+  },
+  {
+   "case": "c29",
+   "group": "H2",
+   "ragtruth_id": "11204",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Hours list 11:30-22:0 for every day Monday through Sunday.",
+   "labeled_spans": [
+    "Google"
+   ]
+  },
+  {
+   "case": "c30",
+   "group": "C",
+   "ragtruth_id": "11772",
+   "task": "Data2txt",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "operates from 5 PM onwards throughout the week",
+   "reason": "Source hours show Monday as 0:0-0:0 (closed) and Saturday opening at 17:30, so the restaurant does not open at 5 PM every day of the week. The extended Fri/Sat hours (until 23:00) are supported.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c31",
+   "group": "C",
+   "ragtruth_id": "6895",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Review: 'The customer service is also always great. Justin and Boxi have never failed to make you feel welcome and are always ready with recommendations!'",
+   "labeled_spans": []
+  },
+  {
+   "case": "c32",
+   "group": "H2",
+   "ragtruth_id": "14216",
+   "task": "QA",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "they require less maintenance and repair",
+   "reason": "The source only says the fluid flywheel 'will not suffer any mechanical damage' from prolonged slipping. It says nothing about maintenance or repair needs.",
+   "labeled_spans": [
+    "4. Faster response time - Fluid flywheels can transmit torque quickly, resulting in faster response times compared to mechanical flywheels.",
+    "5. Quieter operation - Fluid flywheels are quieter to operate than mechanical flywheels, which can make for a more comfortable ride.",
+    "6. More versatile - Fluid flywheels can be used with different types of engines and transmissions, making them a more versatile option than mechanical flywheels."
+   ]
+  },
+  {
+   "case": "c33",
+   "group": "H2",
+   "ragtruth_id": "10780",
+   "task": "Data2txt",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "popular ... located in the heart of Santa Barbara",
+   "reason": "The address is 1295 Coast Village Rd, and a review says parking there is easier 'than anything in Santa Barbara', which suggests it is outside the center. Neither 'heart of Santa Barbara' nor 'popular' is supported.",
+   "labeled_spans": [
+    "outdoor seating",
+    "romantic dates or casual meetups"
+   ]
+  },
+  {
+   "case": "c34",
+   "group": "H2",
+   "ragtruth_id": "11557",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Hours for Monday through Sunday are all '10:0-17:0'.",
+   "labeled_spans": [
+    "ambience of the restaurant is described as casual,"
+   ]
+  },
+  {
+   "case": "c35",
+   "group": "C",
+   "ragtruth_id": "17506",
+   "task": "QA",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Passage 1 (step 4) gives '30 minutes to 1 hour' and passage 2 (steps 1-3 of the same recipe) gives 'Preheat oven to 375°F'. 190°C is a correct conversion.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c36",
+   "group": "C",
+   "ragtruth_id": "10519",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "The hours match the source exactly: Mon-Thu 16:0-22:0, Fri-Sat 16:0-23:0, Sun 16:0-22:0.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c37",
+   "group": "H2",
+   "ragtruth_id": "1772",
+   "task": "Summary",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "Born ... during the Great Depression; became interested in construction and entrepreneurship at a young age",
+   "reason": "The source says he was born January 31, 1924, before the Depression, to immigrants who 'hit hard times during the Great Depression'. His interest in building ('I wanted to build') came after his architecture studies; as a child he only said 'I started working when I was 9... I really wanted to make some money.'",
+   "labeled_spans": [
+    "He passed away on November 12th, 2015"
+   ]
+  },
+  {
+   "case": "c38",
+   "group": "H2",
+   "ragtruth_id": "11771",
+   "task": "Data2txt",
+   "verdict": "AMBIGUOUS",
+   "offending_phrase": "family-owned",
+   "reason": "'In the heart of Old Town Goleta' is supported ('in the middle of Old Town Goleta'). 'Family-owned' is only inferred from 'the couple who runs the place' and 'Nice family restaurant', and the source never states ownership.",
+   "labeled_spans": [
+    "casual",
+    "generous portion"
+   ]
+  },
+  {
+   "case": "c39",
+   "group": "C",
+   "ragtruth_id": "4852",
+   "task": "Summary",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Source: 'The Republican Party's criticism of President Joe Biden's decision to evacuate all American soldiers' and 'Republican suspicions that military officials may have missed key airport terrorist attack warnings'.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c40",
+   "group": "H2",
+   "ragtruth_id": "1910",
+   "task": "Summary",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Source: 'It all started after their engagement in October... They were interviewed by reporter Dave Bakke... Burger King got wind of the article and was immediately interested.'",
+   "labeled_spans": [
+    "Burger and King met when they were student council representatives in fifth grade, and they have been dating ever since"
+   ]
+  },
+  {
+   "case": "c41",
+   "group": "C",
+   "ragtruth_id": "3100",
+   "task": "Summary",
+   "verdict": "AMBIGUOUS",
+   "offending_phrase": "the killing of three more people, including the driver and the boy's uncle, who was later found dead from a self-inflicted gunshot wound",
+   "reason": "Source says the death eventually claimed three more lives (driver, 15-year-old brother, and the uncle, who 'took his own life with his firearm' as police entered). Calling the uncle's suicide a 'killing', saying he was 'found dead', and leaving out the brother are loose paraphrases rather than clear contradictions.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c42",
+   "group": "C",
+   "ragtruth_id": "14489",
+   "task": "QA",
+   "verdict": "AMBIGUOUS",
+   "offending_phrase": "their growth rate can be affected by factors such as soil quality and moisture levels",
+   "reason": "Passage 2 says sequoias grow fastest 'given the right conditions' and need moist, rich soil, but it links failing to keep soil moist to the tree dying, not explicitly to growth rate. This is a mild inference.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c43",
+   "group": "H2",
+   "ragtruth_id": "11081",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "The categories include Resorts, the Ambience is upscale/classy, the city is Santa Barbara, CA, and a review says 'Located on the beach'.",
+   "labeled_spans": [
+    "including fine dining, casual fare,",
+    "outdoor pool, hot tub"
+   ]
+  },
+  {
+   "case": "c44",
+   "group": "H2",
+   "ragtruth_id": "6484",
+   "task": "Data2txt",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "located in downtown Santa Barbara",
+   "reason": "The source gives only the address 21 W Victoria St, Santa Barbara. 'Downtown' does not appear in any field or review. The cuisines (American, Steakhouses, Sandwiches) are supported.",
+   "labeled_spans": [
+    "for both locals and tourists",
+    "in downtown Santa Barbara",
+    "portions are generous"
+   ]
+  },
+  {
+   "case": "c45",
+   "group": "C",
+   "ragtruth_id": "4435",
+   "task": "Summary",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Source: 'Details surrounding the incident remain unclear, with no eyewitness accounts providing precise information on what transpired.'",
+   "labeled_spans": []
+  },
+  {
+   "case": "c46",
+   "group": "C",
+   "ragtruth_id": "576",
+   "task": "Summary",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "Source: the alarm company called MPS 'at 12:21 a.m. April 3 to report that the burglar alarm had been activated at Hatton Garden Safe Deposit Ltd.', and police 'knew a burglar alarm went off but didn't respond'.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c47",
+   "group": "C",
+   "ragtruth_id": "9847",
+   "task": "Data2txt",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "cozy",
+   "reason": "The hours (17:00-22:00 every day), the elegant/classy feel and 'perfect for... special occasion' are supported. Nothing supports 'cozy', and the Ambience field has intimate: false.",
+   "labeled_spans": []
+  },
+  {
+   "case": "c48",
+   "group": "H2",
+   "ragtruth_id": "10587",
+   "task": "Data2txt",
+   "verdict": "SUPPORTED",
+   "offending_phrase": "",
+   "reason": "It is a designated-driver wine-tasting business with many service categories (Limos, Tours, Wine Tours, Taxis, Transportation). Reviews describe drivers taking customers wine tasting.",
+   "labeled_spans": [
+    "offers WiFi on board",
+    "offer validated parking"
+   ]
+  },
+  {
+   "case": "c49",
+   "group": "H2",
+   "ragtruth_id": "10479",
+   "task": "Data2txt",
+   "verdict": "HALLUCINATION",
+   "offending_phrase": "cozy atmosphere",
+   "reason": "Reviews praise consistent delicious food and 'stellar customer service', but no review mentions a cozy atmosphere, and the Ambience field has intimate: false (hipster/casual/trendy).",
+   "labeled_spans": [
+    "provides validated parking"
+   ]
+  }
+ ]
+}
