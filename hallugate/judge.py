@@ -36,7 +36,8 @@ class StudentJudge:
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.tok = AutoTokenizer.from_pretrained(model_dir)
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_dir).to(self.device).eval()
+        # 가중치가 fp16으로 저장돼 있어도 fp32로 올린다 (CPU 판정, 노트북 점수와 일치). GPU에서는 autocast가 반정밀도로 돌린다.
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_dir).float().to(self.device).eval()
         if isinstance(embedder, str):
             from sentence_transformers import SentenceTransformer
             embedder = SentenceTransformer(embedder, device=self.device)
