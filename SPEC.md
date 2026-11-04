@@ -17,13 +17,13 @@ hallugate는 서비스와 LLM API 사이에 위치하는 **OpenAI Chat Completio
                                           │
 서비스 ──요청(+collection 또는 context)──▶ hallugate ──요청(근거 삽입, 검증 필드 제거)──▶ LLM API (Claude / OpenAI 형식)
        ◀──본문 청크 + 판정 청크──   │   ◀──────── 토큰 스트림 ────────
-                                   ├─ Retriever        : 질문 → 컬렉션 근거 조각 N개 (📋)
+                                   ├─ Store            : 질문 → 컬렉션 근거 조각 N개 (✅ SQLite)
                                    ├─ IncrementalSplitter
                                    ├─ Judge             : (근거 조각, 문장 앞부분) → 점수
                                    └─ VerifyPipeline    : pass/hold(8토큰), flag/cut/regenerate(📋)
 ```
 
-**RAG 게이트웨이 (📋 S4, SSOT §7 10/28)**: 근거 문서를 서비스가 매번 요청에 담는 대신, 관리자·개발자가 게이트웨이의 컬렉션에
+**RAG 게이트웨이 (✅ S4 11/05, SSOT §7 10/28)**: 근거 문서를 서비스가 매번 요청에 담는 대신, 관리자·개발자가 게이트웨이의 컬렉션에
 미리 등록해 둘 수 있다. 요청이 `verification.collection`을 지정하면 게이트웨이가 마지막 사용자 질문으로 컬렉션을 검색하고,
 찾은 근거를 시스템 메시지에 넣어 LLM을 호출한 뒤 **같은 근거로** 응답을 판정한다. 이렇게 하면 LLM이 본 근거와 판정 근거가 항상 같다.
 요청에 근거를 직접 담는 기존 방식(검증만)도 그대로 지원한다.
@@ -56,7 +56,7 @@ OpenAI Chat Completions 요청을 그대로 받는다. 추가 필드 하나를 �
     "mode": "pass" | "hold" | "off",     // 기본: 서버 설정 VERIFY_MODE (hold)
     "action": "flag" | "cut",            // 기본: 서버 설정 VERIFY_ACTION (flag)
     "stride": 8,                         // 선택. 문장 앞부분 재판정 간격(tiktoken cl100k 토큰, §5.1). 0이면 끔. 기본: JUDGE_STRIDE, 없으면 판정기 설정 파일(F1 base 8)
-    "collection": "id",                  // 📋 선택. 등록된 컬렉션에서 근거 검색 + 프롬프트 삽입 (§2.5, §2.6)
+    "collection": "id",                  // 선택. 등록된 컬렉션에서 근거 검색 + 프롬프트 삽입 (§2.5, §2.6)
     "regenerate": true | false           // 📋 선택. hold에서 환각 문장 재생성 (§5.2). 기본 false
   }
 }
@@ -65,7 +65,7 @@ OpenAI Chat Completions 요청을 그대로 받는다. 추가 필드 하나를 �
 **근거 문서 결정 순서** (`hallugate/context.py`)
 1. `verification.context` (리스트면 빈 줄로 이어 붙임)
 2. 모든 메시지 본문 안의 `<context>…</context>` 태그 내용
-3. 📋 `verification.collection` (컬렉션 검색, §2.6)
+3. `verification.collection` (컬렉션 검색, §2.6). 1·2가 있으면 컬렉션은 쓰지 않는다
 4. 모두 없으면 `mode = off` (검증 없이 전달)
 
 **전달 규칙**
@@ -83,6 +83,7 @@ SSE(`text/event-stream`). 세 종류의 청크가 나간다.
 | 청크 | 형태 | 비고 |
 |---|---|---|
 | 본문 | 표준 `chat.completion.chunk`, `choices[0].delta.content` | 첫 청크는 `delta.role = "assistant"` |
+| 근거 | `choices: []` + `verification: {"kind": "evidence", ...}` | 컬렉션을 쓴 요청에서 본문보다 먼저 1회 (§2.6) |
 | 판정 | `choices: []` + `verification` 객체 | 표준 클라이언트는 무시, 필요하면 `chunk.verification`으로 읽음 |
 | 종료 | `choices[0].finish_reason` = 업스트림 값(기본 `stop`) 또는 `content_filter`(cut) 후 `data: [DONE]` | |
 
@@ -113,18 +114,28 @@ cut 발생 시 종료 청크에 `{"cut": true, "sentence_idx": n}`이 함께 실
 ### 2.4 `GET /health` ✅
 `{"ok": true, "judge": "<판정기 클래스>", "input_mode": "retrieval|full", "mode": "...", "action": "...", "stride": 8, "stride_unit": "cl100k_base", "threshold": 3.969}`
 
-### 2.5 문서 등록 API 📋
-- `POST /v1/collections/{id}/documents` — 텍스트 문서 등록. 게이트웨이가 조각으로 나누고 임베딩해 저장한다.
-- `GET /v1/collections/{id}/documents` — 등록된 문서 목록.
-- `DELETE /v1/collections/{id}/documents/{doc_id}` — 문서 삭제.
-- 저장소는 `Store` 인터페이스로 감싼다(처음 구현은 SQLite + 임베딩 배열). 판정기와 마찬가지로 나중에 별도 서비스로 분리할 수 있게 한다.
-- 접근 토큰 하나로 보호한다.
+### 2.5 문서 등록 API ✅
+| 요청 | 동작 |
+|---|---|
+| `POST /v1/collections/{id}/documents` | `{"text", "title"?, "doc_id"?}` 또는 `{"documents": [...]}`. 조각으로 나누고 임베딩해 저장, 같은 `doc_id`면 교체. 응답 `data: [{doc_id, title, n_chunks, n_chars}]` |
+| `GET /v1/collections/{id}/documents` | 등록된 문서 목록 `{doc_id, title, n_chunks, n_chars, created}` |
+| `DELETE /v1/collections/{id}/documents/{doc_id}` | 문서 삭제. 없으면 404 |
+| `GET /v1/collections` | 컬렉션 목록 `{collection, n_docs}` |
 
-### 2.6 프롬프트 삽입 📋
-- `verification.collection`이 있으면 마지막 사용자 메시지로 컬렉션을 검색해 근거 조각을 고른다.
-- 시스템 메시지에 "아래 근거만 사용해 답하라" 지시와 근거 블록을 넣는다. 서비스가 보낸 메시지는 바꾸지 않는다.
-- 판정기의 근거 검색은 **이 근거 조각 안에서만** 한다(LLM에 넣은 근거 = 판정 근거).
-- 판정 청크에 사용한 근거 조각 목록(`evidence`)을 싣는다.
+- 저장소는 `Store` 인터페이스(`hallugate/store.py`)로 감싼다. 처음 구현 `SQLiteStore`: SQLite 파일 하나(`COLLECTION_DB`) + 조각 임베딩(float32), 코사인 유사도 전수 검색, 컬렉션별 행렬을 메모리에 캐시(문서 변경 시 무효화). 규모가 커지면 같은 인터페이스로 벡터 DB로 바꾼다.
+- 조각: `COLLECTION_CHUNK_WORDS`(120)단어, `COLLECTION_OVERLAP`(20)단어 겹침. 판정기의 40단어 조각과는 별개다(판정기는 받은 근거를 다시 자기 방식으로 나눈다).
+- 임베더: `COLLECTION_EMBEDDER`, 비우면 판정기(retrieval 방식)의 임베더를 같이 쓰고 없으면 all-MiniLM-L6-v2.
+- 접근 토큰: `ADMIN_TOKEN`을 정하면 문서 API는 `Authorization: Bearer <ADMIN_TOKEN>`이 있어야 한다(401). 비우면 토큰 없이 열린다(로컬 개발용, `/health`의 `collections_auth`로 확인). 채팅 요청의 컬렉션 사용에는 토큰이 필요 없다.
+- `COLLECTION_DB`를 빈 값으로 두면 컬렉션 기능이 꺼지고 관련 요청은 503.
+
+### 2.6 프롬프트 삽입 ✅
+- `verification.collection`이 있고 요청에 근거가 없으면, **마지막 사용자 메시지**로 컬렉션을 검색해 조각 `COLLECTION_TOP_K`(4)개를 고른다. 없는 컬렉션 → 404.
+- 맨 앞에 시스템 메시지를 하나 더한다: 영어 지시("Answer using only the reference documents below. If they do not contain the answer, say that you do not know.") + `<documents>` 블록(`[1] 조각 …`, 유사도 순). 서비스가 보낸 메시지는 바꾸지 않는다.
+- **판정 근거 = 이 조각들을 빈 줄로 이은 텍스트**(LLM에 넣은 근거 = 판정 근거, A9). retrieval 방식 판정기는 이 안에서만 조각을 고르고, full 방식은 이것 전체를 본다.
+- 사용한 조각 목록은 스트리밍이면 본문보다 먼저 근거 청크 1회 `{"kind": "evidence", "collection", "retrieve_ms", "evidence": [{doc_id, title, chunk_idx, text, score}]}`, 비스트리밍이면 `verification.collection`·`verification.evidence`로 싣는다. 응답 헤더 `x-verification-evidence`(조각 수).
+  (처음 계획은 판정 청크마다 싣는 것이었으나, 요청 안에서 근거가 바뀌지 않으므로 한 번만 보낸다.)
+- `mode=off`여도 검색·삽입은 한다(RAG만 쓰고 검증은 끄는 경우). 질문이 비어 조각을 못 찾으면 삽입 없이 `mode=off`.
+- 측정 기록: `collection`, `retrieve_ms`, `n_evidence`.
 
 ### 2.7 업스트림
 - 📋 `UPSTREAM_PROVIDER=openai|anthropic`. OpenAI 형식은 그대로 통과, Claude는 Messages API로 변환해 호출하고 응답을 OpenAI 청크 형식으로 되돌린다.
@@ -254,6 +265,10 @@ hold에서 환각으로 판정된 문장은 아직 사용자에게 나가지 않
 | `JUDGE_TIMEOUT_MS` | 2000 | 판정 1회 시간 제한, 넘으면 fail-open |
 | `JUDGE_DEVICE` | 자동 | `cuda` / `cpu` |
 | `VERIFY_MODE` / `VERIFY_ACTION` | `hold` / `flag` | 요청에 지정이 없을 때 기본 정책 |
+| `COLLECTION_DB` | `collections.sqlite3` | 컬렉션 저장소 파일. 빈 값이면 컬렉션 기능 끔 |
+| `COLLECTION_EMBEDDER` | 판정기 임베더 | 컬렉션 검색 임베더 |
+| `COLLECTION_TOP_K` / `COLLECTION_CHUNK_WORDS` / `COLLECTION_OVERLAP` | 4 / 120 / 20 | 검색 조각 수, 조각 크기·겹침(단어) |
+| `ADMIN_TOKEN` | (빈 값) | 문서 등록 API 접근 토큰. 비우면 열림 |
 | `METRICS_PATH` | `gateway_metrics.jsonl` | 빈 값이면 기록 안 함 |
 
 ## 8. 수용 기준
@@ -268,7 +283,7 @@ hold에서 환각으로 판정된 문장은 아직 사용자에게 나가지 않
 | A6 | GPU 판정 p95 ≤ 30ms, pass 판정 전달 p95 ≤ 50ms | ✅ 20.6ms / 21.1ms |
 | A8 | `stride`를 켜도 본문 보존 100%, hold에서 앞부분이 안전 판정되면 문장 완성 전에 그 부분이 전달됨 | ✅ 테스트 |
 | A7 | 운영 임계값에서 멀쩡한 응답 오표시율과 환각 응답 탐지율이 서비스 요구를 만족 (기준은 S4에서 정의) | 📋 임계값 0에서 6% / 31% |
-| A9 | 컬렉션 근거로 생성·검증할 때 본문 보존 100%, LLM에 넣은 근거 = 판정 근거 | 📋 |
+| A9 | 컬렉션 근거로 생성·검증할 때 본문 보존 100%, LLM에 넣은 근거 = 판정 근거 | ✅ 테스트 (가짜 LLM, pass·hold) |
 | A10 | 스트리밍의 `tool_calls`·`usage` 청크 보존 | ✅ 테스트 (가짜 LLM) |
 | A11 | 고정 예제(`parity_fixture.json`) 점수 일치 \|Δlogit\| ≤ 0.2 | ✅ F1 base 50개 최대 0.000016 (맥 CPU, `load_judge` 경로, `JUDGE_PARITY_DIR` 테스트) |
 | A12 | 판정기 장애·시간 초과·비영어에서 본문 보존 100%, `verified: false` 1회 | ✅ 테스트 |
@@ -279,6 +294,6 @@ hold에서 환각으로 판정된 문장은 아직 사용자에게 나가지 않
 |---|---|
 | S3 | ~~학습 판정기로 A5·A6 측정, CPU 판정 속도 측정~~ ✅, 중간보고 |
 | F | 모델 v1.0 동결: F1 base 판정기, `judge_config.json` v1.0(8토큰·서비스 10% 임계값, 재생성용 임계값), `judge_batch`, 고정 예제 일치 |
-| S4 | ~~재판정 간격 토큰 단위, `tool_calls`·`usage` 통과(A10), 판정기 설정 파일, 언어 감지, fail-open~~ ✅(11/05), Claude Messages API 변환(§2.7), 컬렉션 API·저장소·검색·프롬프트 삽입·`evidence`(§2.5·2.6, A9), 재생성(§5.2), 접근 토큰, 판정 묶음 처리, 배포 후 실제 LLM 속도로 종단 간 재측정 |
+| S4 | ~~재판정 간격 토큰 단위, `tool_calls`·`usage` 통과(A10), 판정기 설정 파일, 언어 감지, fail-open~~ ✅(11/05), ~~컬렉션 API·저장소·검색·프롬프트 삽입·`evidence`(§2.5·2.6, A9), 문서 API 접근 토큰~~ ✅(11/05), Claude Messages API 변환(§2.7), 재생성(§5.2), 판정 묶음 처리, 배포 후 실제 LLM 속도로 종단 간 재측정 |
 | S5 | RAGTruth test 1회 개방 최종 평가, 기존 도구의 고정 설정(NeMo Guardrails의 chunk 200 등)과 비교 |
 | S6 | 데모 (서비스 예제 + 판정 시각화), 보고서, SOFTCON |

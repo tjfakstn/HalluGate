@@ -55,6 +55,9 @@ class RequestRecord:
     verified: bool = True              # 검증을 끝까지 했는지 (fail-open이면 False)
     unverified_reason: str = ''
     threshold: float = None
+    collection: str = ''               # RAG 컬렉션 (SPEC §2.6)
+    retrieve_ms: float = 0.0
+    n_evidence: int = 0
     sentences: list = field(default_factory=list)
     checks: list = field(default_factory=list)
 

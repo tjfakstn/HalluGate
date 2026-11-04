@@ -58,7 +58,7 @@ print('판정기:', os.listdir('student_vark'))
 
 md("## 2. 게이트웨이 코드 (hallugate)\n\n아래 셀들은 파일을 만들기만 한다. 로컬에서 16개 테스트를 통과한 코드와 같다.")
 files = ['hallugate/__init__.py', 'hallugate/config.py', 'hallugate/context.py', 'hallugate/splitter.py',
-         'hallugate/judge.py', 'hallugate/pipeline.py', 'hallugate/tokens.py', 'hallugate/app.py', 'serve.py', 'mock_upstream.py',
+         'hallugate/judge.py', 'hallugate/pipeline.py', 'hallugate/tokens.py', 'hallugate/store.py', 'hallugate/app.py', 'serve.py', 'mock_upstream.py',
          'scripts/make_replay_set.py', 'scripts/bench.py', 'tests/test_gateway.py', 'pytest.ini']
 for f in files:
     code(f'%%writefile gateway/{f}\n' + open(os.path.join(G, f)).read())

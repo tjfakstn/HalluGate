@@ -72,9 +72,13 @@ async def _prepare(judge, ref, rec):
     return ref_idx
 
 
-def create_app(settings=None, judge=None, http_client=None):
+def _err(msg, status=400, kind='invalid_request_error'):
+    return JSONResponse({'error': {'message': msg, 'type': kind}}, status_code=status)
+
+
+def create_app(settings=None, judge=None, http_client=None, store=None):
     settings = settings or Settings()
-    state = {'judge': judge, 'client': http_client}
+    state = {'judge': judge, 'client': http_client, 'store': store}
     tokens = make_tokens(settings.stride_tokenizer)
 
     def default_stride():
@@ -89,6 +93,14 @@ def create_app(settings=None, judge=None, http_client=None):
         warm = state['judge'].prepare('warm up reference text ' * 40)
         for _ in range(3):
             state['judge'].judge(warm, 'This is a warm up sentence.')
+        if state['store'] is None and settings.collection_db:
+            from .store import SQLiteStore
+            emb = None if settings.collection_embedder else getattr(state['judge'], 'embedder', None)
+            if emb is None or not hasattr(emb, 'encode'):
+                from sentence_transformers import SentenceTransformer
+                emb = SentenceTransformer(settings.collection_embedder or 'sentence-transformers/all-MiniLM-L6-v2')
+            state['store'] = SQLiteStore(settings.collection_db, emb, settings.collection_chunk_words,
+                                         settings.collection_overlap)
         own_client = state['client'] is None
         if own_client:
             state['client'] = httpx.AsyncClient(timeout=settings.upstream_timeout)
@@ -115,23 +127,90 @@ def create_app(settings=None, judge=None, http_client=None):
         j, st = state['judge'], default_stride()
         return {'ok': True, 'judge': type(j).__name__, 'input_mode': getattr(j, 'mode', ''),
                 'mode': settings.default_mode, 'action': settings.default_action, 'stride': st,
-                'stride_unit': tokens.name, 'threshold': j.threshold_for(st)}
+                'stride_unit': tokens.name, 'threshold': j.threshold_for(st),
+                'collections': state['store'] is not None, 'collections_auth': bool(settings.admin_token)}
+
+    # ---------- 컬렉션 문서 등록 API (SPEC §2.5) ----------
+    def _admin(request):
+        """문서 API 접근 확인. 문제가 있으면 오류 응답, 통과면 None."""
+        if state['store'] is None:
+            return _err('collections are disabled (COLLECTION_DB is empty)', 503, 'unavailable')
+        if settings.admin_token and request.headers.get('authorization') != f'Bearer {settings.admin_token}':
+            return _err('invalid or missing admin token', 401, 'authentication_error')
+        return None
+
+    @app.get('/v1/collections')
+    async def list_collections(request: Request):
+        if (e := _admin(request)):
+            return e
+        return {'object': 'list', 'data': await asyncio.to_thread(state['store'].collections)}
+
+    @app.post('/v1/collections/{cid}/documents')
+    async def add_documents(cid: str, request: Request):
+        """{"text": ..., "title"?: ..., "doc_id"?: ...} 또는 {"documents": [그런 객체, ...]}. 같은 doc_id면 교체."""
+        if (e := _admin(request)):
+            return e
+        b = await request.json()
+        docs = b.get('documents') if isinstance(b.get('documents'), list) else [b]
+        if not docs or not all(isinstance(d, dict) and isinstance(d.get('text'), str) and d['text'].strip() for d in docs):
+            return _err('each document needs a non-empty "text"')
+        out = []
+        for d in docs:
+            out.append(await asyncio.to_thread(state['store'].add, cid, d['text'], d.get('title', ''), d.get('doc_id')))
+        return {'object': 'list', 'collection': cid, 'data': out}
+
+    @app.get('/v1/collections/{cid}/documents')
+    async def list_documents(cid: str, request: Request):
+        if (e := _admin(request)):
+            return e
+        return {'object': 'list', 'collection': cid, 'data': await asyncio.to_thread(state['store'].list, cid)}
+
+    @app.delete('/v1/collections/{cid}/documents/{doc_id}')
+    async def delete_document(cid: str, doc_id: str, request: Request):
+        if (e := _admin(request)):
+            return e
+        if not await asyncio.to_thread(state['store'].delete, cid, doc_id):
+            return _err(f'document {doc_id} not found in {cid}', 404, 'not_found_error')
+        return {'deleted': True, 'collection': cid, 'doc_id': doc_id}
 
     @app.post('/v1/chat/completions')
     async def chat(request: Request):
         raw = await request.json()
         try:
-            body, ref, mode, action, stride = ctxmod.extract(raw, settings.default_mode, settings.default_action,
-                                                             default_stride(), with_stride=True)
+            body, ref, mode, action, stride, opts = ctxmod.extract(raw, settings.default_mode, settings.default_action,
+                                                                   default_stride(), with_stride=True, with_opts=True)
         except ValueError as e:
-            return JSONResponse({'error': {'message': str(e), 'type': 'invalid_request_error'}}, status_code=400)
+            return _err(str(e))
+
+        # 컬렉션 RAG (SPEC §2.6): 요청에 근거가 없고 collection이 있으면 검색 → 프롬프트 삽입 → 같은 근거로 판정
+        evidence, coll = None, opts.get('collection') if not ref else None
+        t_r = time.perf_counter()
+        if coll:
+            store = state['store']
+            if store is None:
+                return _err('collections are disabled (COLLECTION_DB is empty)', 503, 'unavailable')
+            if not await asyncio.to_thread(store.exists, coll):
+                return _err(f'collection {coll} not found', 404, 'not_found_error')
+            evidence = await asyncio.to_thread(store.search, coll, ctxmod.last_user_text(body), settings.collection_top_k)
+            if evidence:
+                body['messages'] = ctxmod.rag_messages(body.get('messages', []), evidence)
+                ref = ctxmod.rag_reference(evidence)
+            else:
+                mode = 'off'                               # 질문이 비어 근거를 못 찾음 → 검증 없이 전달
+        retrieve_ms = (time.perf_counter() - t_r) * 1000
 
         client, judge = state['client'], state['judge']
         url = settings.upstream_base_url.rstrip('/') + '/chat/completions'
         headers = _headers(request)
-        rec = RequestRecord(mode=mode, action=action, stride=stride, tag=request.headers.get('x-request-tag', ''))
+        rec = RequestRecord(mode=mode, action=action, stride=stride, tag=request.headers.get('x-request-tag', ''),
+                            collection=coll or '', retrieve_ms=retrieve_ms if coll else 0.0,
+                            n_evidence=len(evidence or []))
         thr = judge.threshold_for(stride)
         vh = {'x-verification-mode': mode, 'x-verification-action': action, 'x-verification-stride': str(stride)}
+        if coll:
+            vh['x-verification-evidence'] = str(len(evidence or []))
+        ev_info = ({'kind': 'evidence', 'collection': coll, 'retrieve_ms': retrieve_ms,
+                    'evidence': [e.to_dict() for e in evidence]} if evidence else None)
 
         # ---------- 비스트리밍 ----------
         if not body.get('stream'):
@@ -178,6 +257,7 @@ def create_app(settings=None, judge=None, http_client=None):
             data['verification'] = {'mode': mode, 'action': action, 'stride': 0, 'threshold': thr,
                                     'prepare_ms': rec.prepare_ms, 'sentences': results, 'cut': rec.cut,
                                     'verified': rec.verified,
+                                    **({'collection': coll, 'evidence': ev_info['evidence']} if ev_info else {}),
                                     **({'reason': rec.unverified_reason} if not rec.verified else {})}
             rec.t_client_done = rec.now()
             _log(rec)
@@ -217,6 +297,8 @@ def create_app(settings=None, judge=None, http_client=None):
             try:
                 ref_idx = await _prepare(judge, ref, rec)
                 yield chunk(delta={'role': 'assistant', 'content': ''})
+                if ev_info:                                       # 사용한 근거 조각을 본문보다 먼저 한 번 보낸다
+                    yield chunk(verification=ev_info)
                 pipe = VerifyPipeline(judge, ref_idx, mode, action, rec, stride=stride, tokens=tokens,
                                       threshold=thr, timeout_ms=settings.judge_timeout_ms)
                 async for ev in pipe.run(_upstream_deltas(resp, meta)):

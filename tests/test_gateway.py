@@ -487,3 +487,137 @@ def test_parity_fixture():
     j = load_judge(Settings(judge_model_dir=d, judge_device='cpu'))
     diffs = [abs(j.judge(j.prepare(it['reference']), it['text']).score - it['score_cpu_fp32']) for it in fx['items']]
     assert max(diffs) <= 0.2, max(diffs)
+
+
+# ---------------- 컬렉션·RAG (SPEC §2.5·2.6, A9) ----------------
+class HashEmb:
+    """테스트용 임베더: 단어 해시 묶음 벡터 (같은 단어가 많을수록 가깝다)."""
+    def encode(self, texts, **kw):
+        import numpy as np
+        out = np.zeros((len(texts), 64), dtype=np.float32)
+        for i, t in enumerate(texts):
+            for w in t.lower().replace('.', ' ').replace('?', ' ').split():
+                out[i, sum(map(ord, w)) % 64] += 1
+        return out / np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-9)
+
+
+DOC_A = 'The company was founded in 1998 in Seoul. It reported revenue of 2 billion dollars in 2023.'
+DOC_B = 'Penguins live mostly in the southern hemisphere and cannot fly but swim very well.'
+
+
+def _store(tmp_path):
+    from hallugate.store import SQLiteStore
+    return SQLiteStore(str(tmp_path / 'c.sqlite3'), HashEmb(), chunk_words=12, overlap=2)
+
+
+def test_store_add_search_delete(tmp_path):
+    st = _store(tmp_path)
+    a = st.add('kb', DOC_A, title='company', doc_id='a')
+    st.add('kb', DOC_B, title='penguin', doc_id='b')
+    assert a['n_chunks'] >= 2 and [d['doc_id'] for d in st.list('kb')] == ['a', 'b']
+    hit = st.search('kb', 'When was the company founded in Seoul?', 2)
+    assert hit[0].doc_id == 'a' and hit[0].score >= hit[1].score
+    st.add('kb', 'Replaced text about owls.', doc_id='b')                 # 같은 id → 교체
+    assert len(st.list('kb')) == 2 and st.list('kb')[1]['n_chunks'] == 1
+    assert st.delete('kb', 'a') and not st.delete('kb', 'a')
+    assert st.collections() == [{'collection': 'kb', 'n_docs': 1}] and not st.exists('nope')
+    with pytest.raises(ValueError):
+        st.add('kb', '   ')
+
+
+class CapJudge(LexicalJudge):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.refs = []
+
+    def prepare(self, reference):
+        self.refs.append(reference)
+        return super().prepare(reference)
+
+
+def _rag_gw(tmp_path, judge=None, **kw):
+    sent = []
+
+    async def hook(req):
+        sent.append(json.loads(req.content))
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock',
+                           event_hooks={'request': [hook]})
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path=str(tmp_path / 'm.jsonl'), stride_tokenizer='words',
+                 collection_top_k=2, **kw)
+    st = _store(tmp_path)
+    app = create_app(s, judge=judge or CapJudge(threshold=0.5), http_client=up, store=st)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://gw'), s, st, sent
+
+
+def rag_body(resp, mode='hold', stream=True, coll='kb', question='When was the company founded and what was its revenue?'):
+    return {'model': 'mock', 'stream': stream, 'messages': [{'role': 'system', 'content': 'Be brief.'},
+                                                             {'role': 'user', 'content': question}],
+            'verification': {'collection': coll, 'mode': mode}, 'mock_response': resp,
+            'mock_ttft_ms': 0, 'mock_token_ms': 0}
+
+
+@pytest.mark.asyncio
+async def test_collection_api_auth_and_crud(tmp_path):
+    client, *_ = _rag_gw(tmp_path, admin_token='secret')
+    url = '/v1/collections/kb/documents'
+    assert (await client.post(url, json={'text': DOC_A})).status_code == 401
+    H = {'Authorization': 'Bearer secret'}
+    r = await client.post(url, json={'documents': [{'text': DOC_A, 'doc_id': 'a'}, {'text': DOC_B, 'title': 'p'}]}, headers=H)
+    assert r.status_code == 200 and [d['n_chunks'] > 0 for d in r.json()['data']] == [True, True]
+    assert (await client.post(url, json={'text': ''}, headers=H)).status_code == 400
+    assert len((await client.get(url, headers=H)).json()['data']) == 2
+    assert (await client.get('/v1/collections', headers=H)).json()['data'] == [{'collection': 'kb', 'n_docs': 2}]
+    assert (await client.delete(url + '/a', headers=H)).json()['deleted'] is True
+    assert (await client.delete(url + '/a', headers=H)).status_code == 404
+    h = (await client.get('/health')).json()
+    assert h['collections'] and h['collections_auth']
+
+
+@pytest.mark.asyncio
+async def test_collections_disabled(tmp_path):
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path='', stride_tokenizer='words', collection_db='')
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(s, judge=LexicalJudge(), http_client=up)),
+                               base_url='http://gw')
+    assert (await client.get('/v1/collections')).status_code == 503
+    assert (await client.post('/v1/chat/completions', json=rag_body(GOOD))).status_code == 503
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['pass', 'hold'])
+async def test_rag_same_evidence_for_llm_and_judge(tmp_path, mode):
+    # A9: LLM 프롬프트에 넣은 근거 = 판정 근거, 본문 보존, 사용한 근거를 본문보다 먼저 알림
+    j = CapJudge(threshold=0.5)
+    client, s, st, sent = _rag_gw(tmp_path, judge=j)
+    st.add('kb', DOC_A, title='company', doc_id='a'); st.add('kb', DOC_B, title='penguin', doc_id='b')
+    text, ev, finish = await run(client, rag_body(BAD_2ND, mode))
+    assert text == BAD_2ND and finish == 'stop'
+    vs = [e for k, e in ev if k == 'v']
+    assert ev[0][0] == 'v' and vs[0]['kind'] == 'evidence' and vs[0]['collection'] == 'kb'
+    evid = [e['text'] for e in vs[0]['evidence']]
+    assert len(evid) == 2 and vs[0]['evidence'][0]['doc_id'] == 'a'
+    msgs = sent[-1]['messages']
+    assert msgs[0]['role'] == 'system' and all(t in msgs[0]['content'] for t in evid)
+    assert msgs[1:] == rag_body(GOOD)['messages']                     # 서비스 메시지는 그대로
+    assert 'verification' not in sent[-1]
+    assert j.refs[-1] == '\n\n'.join(evid)                            # 판정 근거 = 프롬프트 근거
+    sents = [v for v in vs if v.get('kind') == 'sentence']
+    assert [v['hallucinated'] for v in sents] == [False, True, False]
+    rec = json.loads(open(s.metrics_path).read().splitlines()[-1])
+    assert rec['collection'] == 'kb' and rec['n_evidence'] == 2
+
+
+@pytest.mark.asyncio
+async def test_rag_non_stream_and_errors(tmp_path):
+    client, _, st, sent = _rag_gw(tmp_path)
+    st.add('kb', DOC_A, doc_id='a')
+    r = await client.post('/v1/chat/completions', json=rag_body(BAD_2ND, 'hold', stream=False))
+    v = r.json()['verification']
+    assert v['collection'] == 'kb' and v['evidence'][0]['doc_id'] == 'a' and r.headers['x-verification-evidence'] == '2'
+    assert [x['hallucinated'] for x in v['sentences']] == [False, True, False]
+    assert (await client.post('/v1/chat/completions', json=rag_body(GOOD, coll='missing'))).status_code == 404
+    # 요청에 근거를 직접 담으면 그것이 우선, 컬렉션 검색·프롬프트 삽입 안 함
+    b = rag_body(GOOD); b['verification']['context'] = REF
+    n = len(sent)
+    await run(client, b)
+    assert sent[n]['messages'] == b['messages']

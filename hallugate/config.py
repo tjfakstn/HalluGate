@@ -43,5 +43,15 @@ class Settings:
     #   cut  : 환각 판정 시 응답을 끊음 (finish_reason=content_filter)
     default_action: str = field(default_factory=lambda: _env('VERIFY_ACTION', 'flag'))
 
+    # 컬렉션(RAG, SPEC §2.5·2.6). COLLECTION_DB를 빈 값으로 두면 컬렉션 기능을 끈다
+    collection_db: str = field(default_factory=lambda: os.environ.get('COLLECTION_DB', 'collections.sqlite3'))
+    # 검색 임베더. 비우면 판정기(retrieval 방식)의 임베더를 같이 쓰고, 판정기에 임베더가 없으면 all-MiniLM-L6-v2
+    collection_embedder: str = field(default_factory=lambda: _env('COLLECTION_EMBEDDER', None))
+    collection_top_k: int = field(default_factory=lambda: _env('COLLECTION_TOP_K', 4, int))
+    collection_chunk_words: int = field(default_factory=lambda: _env('COLLECTION_CHUNK_WORDS', 120, int))
+    collection_overlap: int = field(default_factory=lambda: _env('COLLECTION_OVERLAP', 20, int))
+    # 문서 등록 API 접근 토큰 (Authorization: Bearer). 비우면 토큰 없이 열린다(로컬 개발용)
+    admin_token: str = field(default_factory=lambda: _env('ADMIN_TOKEN', ''))
+
     # 빈 값이면 기록하지 않는다
     metrics_path: str = field(default_factory=lambda: os.environ.get('METRICS_PATH', 'gateway_metrics.jsonl'))
