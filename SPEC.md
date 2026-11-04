@@ -151,7 +151,7 @@ class Judge:
 | `LexicalJudge` | 테스트·데모 전용. 근거에 없는 단어 비율. **판별력 없음, 측정에 사용 금지** |
 
 - `hallucinated = score >= JUDGE_THRESHOLD` (기본 0.0, 📋 S4에서 보정 — 0.0은 문장 재현율 0.22로 너무 보수적, SSOT §5 S3)
-- 📋 운영 판정기를 F1 base(DeBERTa-v3-base)로 교체(모델 v1.0 동결 후 ✅). `judge_config.json`(임계값·재판정 간격·임베더·k)을 읽는다. 배포 기본값은 8토큰·임계값 3.906(SSOT §5 F1).
+- 📋 운영 판정기를 F1 base(DeBERTa-v3-base)로 교체(모델 v1.0 동결 후 ✅). `judge_config.json`(임계값·재판정 간격·임베더·k)을 읽는다. 배포 기본값은 8토큰·임계값 3.969(SSOT §5 F1 재실행).
 - 📋 `Judge.judge_batch()`: 여러 판정을 한 번에 처리.
 - 📋 재판정 간격 단위는 **tiktoken cl100k 토큰**. 현재는 업스트림 조각 수라 학습·임계값과 맞지 않는다(Claude는 조각당 약 5토큰).
 - 📋 영어가 아닌 응답은 판정을 끄고 `verified: false`.
