@@ -179,11 +179,12 @@
 - **11/05 I2 결과: 규칙상 미채택(주 기준 I2-1 미달)** — cal-L 8토큰 원래 정답 0.507 → 0.507(차이 0.000 [−0.034, +0.034]). 안전·지연 기준은 충족(C1 +0.020, p95 39.8ms). 사후 관찰: C1 문장 끝 +0.039(유의), dev-L 멀쩡한 응답 표시율 9.1% → 5.3%, Summary 0.156 → 0.266. 체크포인트 재현율이 마지막까지 오르는 중이었음. 9절 셀 수정(`reference_compile`을 설정으로)을 빌더에 반영
 - **11/05 S4 1단계(서비스, I2 실행과 병행)**: 판정기 교체가 폴더 교체만으로 되도록 `load_judge`가 `judge_config.json`을 읽음(입력 방식 retrieval=F1 base / full=I2 노트북 형식, 간격별 임계값, 기본 간격). 재판정 간격을 tiktoken cl100k 토큰(문장 시작부터 s토큰, 학습 지점과 같음)으로 변경, 기본 정책 hold·8토큰·flag. `tool_calls`·`usage` 청크 통과(A10), fail-open(판정 오류·시간 초과)·비영어 검증 중단(`verified: false`, A12). F1 base 실제 가중치로 고정 예제 50개 점수 차 최대 0.000016(A11). 테스트 23 → 33개(+ 가중치 있을 때만 도는 일치 테스트 1개)
 - **11/05 S4 컬렉션·RAG**: 문서 등록·목록·삭제 API(`/v1/collections/...`, `ADMIN_TOKEN`), `SQLiteStore`(SQLite + 임베딩 검색), `verification.collection` → 마지막 질문으로 검색 → 시스템 메시지로 근거 삽입 → 같은 근거로 판정(A9), 근거 청크 1회. 테스트 39개. 검색 기본값(상위 4, 120단어)은 실측 근거 없는 초기값
+- **11/05 X1 노트북 추가(외부 공개 판정기 예비 비교)**: LettuceDetect-large·HHEM-2.1-open·HDM-2-3B를 F1 base와 같은 dev-L·정답·보정으로 비교. 트랙 A(완성 응답, 상대의 본래 사용법)와 트랙 B(스트리밍, 문장 끝 + 8토큰). 상대가 RAGTruth train으로 학습됐을 수 있어 dev-L은 상대에게 유리 → 보고용, 본 비교는 S5 test. 사전 기준·해석 규칙 SSOT §6 X1. smoke test `smoke_x1.py`
 - 11/04 저장소 복구: `544a841`에서 지워진 PROGRESS·RESEARCH_PLAN·빌더·노트북 49개 복구(`6c8f663`), judge.py fp32 수정 재반영(`ca8218b`). 10/21 커밋 `a1addb8`은 저장소에 없어 10/21~10/28 기록은 인계 문서(`docs/handoff/`)로 복원
 
 ---
 
-## 현재 위치 (2026-11-04 기준)
+## 현재 위치 (2026-11-05 기준)
 
 **완료**
 - 판정기 연구 종료(10/21). 최종 판정기 F1 base(재실행 가중치, 8토큰, 임계값 3.969), 가중치 확보(맥 `~/Downloads/f1_final_judges/`, 드라이브 `final/`)
@@ -200,7 +201,8 @@
 7. 사람 점검 30개(사용자, `r4/r4_human_audit.csv`)
 8. `docs/MODEL_CARD.md` → SSOT §4 교체, v1.0 동결
 - 그 뒤 S4(11/4~11/17): ~~토큰 단위 재판정, tool_calls·usage 통과, 판정기 설정 파일, fail-open·언어 감지~~(11/05) ~~컬렉션·RAG·문서 API 토큰~~(11/05) → Claude 변환, 재생성, `judge_batch`
-- S5(11/18~12/1): RAGTruth test 1회, Itkin·LettuceDetect·Claude/GPT 직접 판정과 비교. S6(12/2~12/15): 데모·보고서·SOFTCON
+- X1 실행(A100, HDM-2는 HF 약관 동의 + `HF_TOKEN` 필요) → 결과 수령 후 SSOT §5·§6 반영
+- S5(11/18~12/1): RAGTruth test 1회(X1 코드 재사용), Itkin·LettuceDetect·Claude/GPT 직접 판정과 비교. S6(12/2~12/15): 데모·보고서·SOFTCON
 
 **열린 문제**
 - R4 정답 보정이 Claude 기준 — 사람 점검 전까지 C1 수치는 'Claude 기준'으로 한정
