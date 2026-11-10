@@ -124,6 +124,11 @@ def point_scores(x, text, spans, probs, pts):
         out.append(max([float(p) for (s, e), c, p in zip(spans, cs, probs) if e <= q['cut'] and sn['a'] <= c < sn['b']] or [NO_SCORE]))
     return out
 
+# 묶음 크기(토큰 수 상한): A100(40GB 이상) 기준값, 그보다 작은 GPU(T4 16GB)는 4분의 1
+BIG_GPU = DEVICE != 'cuda' or torch.cuda.get_device_properties(0).total_memory > 30 * 2**30
+def budget(big):
+    return big if BIG_GPU else big // 4
+
 def length_batches(lengths, max_tokens, max_bs=64):
     # 길이순으로 묶어 묶음마다 (가장 긴 길이 × 개수) ≤ max_tokens
     order = sorted(range(len(lengths)), key=lambda i: lengths[i])
@@ -179,9 +184,10 @@ def lt_load():
     return tok, model
 
 @torch.no_grad()
-def lt_run(tok, model, pairs, max_tokens=64000):
+def lt_run(tok, model, pairs, max_tokens=None):
     # (RAGTruth 원 프롬프트, 답) 쌍마다 답 토큰의 글자 구간·환각 확률, 프롬프트 잘림 여부.
     # LettuceDetect 학습·추론과 같은 입력: tokenizer(prompt, answer, truncation='only_first', max_length=4096)
+    max_tokens = max_tokens or budget(64000)
     lens = [min(LT_MAX, (len(p) + len(a)) // 3 + 8) for p, a in pairs]
     out = [None] * len(pairs)
     for b in length_batches(lens, max_tokens):
@@ -206,8 +212,9 @@ def hh_load():
     return AutoModelForSequenceClassification.from_pretrained(HH_ID, trust_remote_code=True).to(DEVICE).eval()
 
 @torch.no_grad()
-def hh_run(model, pairs, max_tokens=48000):
+def hh_run(model, pairs, max_tokens=None):
     # (근거, 문장 또는 문장 앞부분) 쌍마다 환각 점수 = 1 − 일치 확률 (모델 카드의 predict 그대로)
+    max_tokens = max_tokens or budget(48000)
     lens = [(len(p) + len(h)) // 3 + 32 for p, h in pairs]
     out = np.zeros(len(pairs), dtype=np.float32)
     for b in length_batches(lens, max_tokens):
@@ -334,7 +341,7 @@ md(r"""# X1 — 외부 공개 판정기 예비 비교 (LettuceDetect · HHEM-2.1
 - **해석 규칙**: 트랙 A 응답 AUROC와 트랙 B 8토큰 서비스 탐지율 각각, F1 base − 상대의 응답 단위 쌍체 부트스트랩(2,000회) 95% 하한 > 0이면 "상대에게 유리한 조건에서도 앞섬", 상한 < 0이면 "dev-L에서는 뒤짐(오염 영향 분리 불가)", 그 밖은 "차이 없음".
 - 모델 접근·로드가 실패하면 그 도구는 제외로 기록한다(기준 변경 없음). **이 결과로 판정기·임계값을 바꾸지 않는다.**
 
-> **런타임: A100** (40GB 이상). 드라이브에 `r0/`, `r4/`, `r4b/labels_train.json`, `final/scores_base.npy`.
+> **런타임: A100** (40GB 이상). T4(16GB)도 되지만 묶음 크기가 자동으로 4분의 1이 되어 느리고, 판정 지연 수치는 T4 기준이 된다. 드라이브에 `r0/`, `r4/`, `r4b/labels_train.json`, `final/scores_base.npy`.
 > HDM-2는 접근 승인이 필요하다: [모델 페이지](https://huggingface.co/AimonLabs/hallucination-detection-model)에서 약관에 동의하고, Colab 보안 비밀에 `HF_TOKEN`을 넣는다(없으면 HDM-2만 제외).
 > HDM-2 라이선스는 CC BY-NC-SA 4.0(비상업)이라 연구 비교에만 쓴다. 결과는 드라이브 `Colab Notebooks/HalluGate/x1/`와 `x1_results.zip`.
 """)

@@ -1,0 +1,113 @@
+{
+ "X1_0": null,
+ "avail": {
+  "Fb": {
+   "A": true,
+   "B": true,
+   "note": "저장 점수"
+  },
+  "LT": {
+   "A": true,
+   "B": true,
+   "note": "프롬프트 잘림 0.00%"
+  },
+  "HH": {
+   "A": true,
+   "B": true,
+   "note": ""
+  },
+  "HD": {
+   "A": false,
+   "B": false,
+   "note": "실패: GatedRepoError: 401 Client Error. (Request ID: Root=1-6af34015-60fe1d4c47b993934a5bf722;ec3689a3-9e07-41a2-8cee-106d71ab9879)\n\nCannot access gated repo for url https://huggingface.co/AimonLabs/hallucination-detection-model/resolve/main/config.json.\nAccess to model dataframer/hallucination-detection-model is restricted. You must have access to it and be authenticated to access it. Please log in."
+  }
+ },
+ "latency": {
+  "Fb": {
+   "note": "F1 재실행 A100 80GB p95 40.7ms (SSOT §5 F1)"
+  },
+  "LT": {
+   "p50": 29.09600249995492,
+   "p95": 42.45434534991545
+  },
+  "HH": {
+   "p50": 17.1730329999491,
+   "p95": 31.802462400048615
+  }
+ },
+ "n_points": 76963,
+ "compare": [
+  {
+   "labels": "orig",
+   "vs": "LettuceDetect-large",
+   "metric": "트랙 A 응답 AUROC",
+   "diff": -0.12352283008297749,
+   "lo": -0.14111431677789585,
+   "hi": -0.10707607488208633,
+   "verdict": "뒤짐(오염 영향 분리 불가)"
+  },
+  {
+   "labels": "orig",
+   "vs": "LettuceDetect-large",
+   "metric": "트랙 B 8토큰 서비스 탐지율",
+   "diff": -0.29117259552042163,
+   "lo": -0.3306982872200263,
+   "hi": -0.2502964426877472,
+   "verdict": "뒤짐(오염 영향 분리 불가)"
+  },
+  {
+   "labels": "orig",
+   "vs": "HHEM-2.1-open",
+   "metric": "트랙 A 응답 AUROC",
+   "diff": 0.0633202512139368,
+   "lo": 0.04102825098764709,
+   "hi": 0.08489500576773291,
+   "verdict": "앞섬"
+  },
+  {
+   "labels": "orig",
+   "vs": "HHEM-2.1-open",
+   "metric": "트랙 B 8토큰 서비스 탐지율",
+   "diff": 0.23583662714097497,
+   "lo": 0.19499341238471674,
+   "hi": 0.27931488801054016,
+   "verdict": "앞섬"
+  },
+  {
+   "labels": "C1",
+   "vs": "LettuceDetect-large",
+   "metric": "트랙 A 응답 AUROC",
+   "diff": -0.05722271177690541,
+   "lo": -0.07429892155990059,
+   "hi": -0.03990983062864644,
+   "verdict": "뒤짐(오염 영향 분리 불가)"
+  },
+  {
+   "labels": "C1",
+   "vs": "LettuceDetect-large",
+   "metric": "트랙 B 8토큰 서비스 탐지율",
+   "diff": -0.08310502283105026,
+   "lo": -0.11598173515981736,
+   "hi": -0.05022831050228316,
+   "verdict": "뒤짐(오염 영향 분리 불가)"
+  },
+  {
+   "labels": "C1",
+   "vs": "HHEM-2.1-open",
+   "metric": "트랙 A 응답 AUROC",
+   "diff": 0.03777937995674119,
+   "lo": 0.014584954451783145,
+   "hi": 0.06238870563321556,
+   "verdict": "앞섬"
+  },
+  {
+   "labels": "C1",
+   "vs": "HHEM-2.1-open",
+   "metric": "트랙 B 8토큰 서비스 탐지율",
+   "diff": 0.22557077625570776,
+   "lo": 0.19178082191780826,
+   "hi": 0.2593607305936073,
+   "verdict": "앞섬"
+  }
+ ]
+}

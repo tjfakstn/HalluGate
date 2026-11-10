@@ -180,6 +180,7 @@
 - **11/05 S4 1단계(서비스, I2 실행과 병행)**: 판정기 교체가 폴더 교체만으로 되도록 `load_judge`가 `judge_config.json`을 읽음(입력 방식 retrieval=F1 base / full=I2 노트북 형식, 간격별 임계값, 기본 간격). 재판정 간격을 tiktoken cl100k 토큰(문장 시작부터 s토큰, 학습 지점과 같음)으로 변경, 기본 정책 hold·8토큰·flag. `tool_calls`·`usage` 청크 통과(A10), fail-open(판정 오류·시간 초과)·비영어 검증 중단(`verified: false`, A12). F1 base 실제 가중치로 고정 예제 50개 점수 차 최대 0.000016(A11). 테스트 23 → 33개(+ 가중치 있을 때만 도는 일치 테스트 1개)
 - **11/05 S4 컬렉션·RAG**: 문서 등록·목록·삭제 API(`/v1/collections/...`, `ADMIN_TOKEN`), `SQLiteStore`(SQLite + 임베딩 검색), `verification.collection` → 마지막 질문으로 검색 → 시스템 메시지로 근거 삽입 → 같은 근거로 판정(A9), 근거 청크 1회. 테스트 39개. 검색 기본값(상위 4, 120단어)은 실측 근거 없는 초기값
 - **11/05 X1 노트북 추가(외부 공개 판정기 예비 비교)**: LettuceDetect-large·HHEM-2.1-open·HDM-2-3B를 F1 base와 같은 dev-L·정답·보정으로 비교. 트랙 A(완성 응답, 상대의 본래 사용법)와 트랙 B(스트리밍, 문장 끝 + 8토큰). 상대가 RAGTruth train으로 학습됐을 수 있어 dev-L은 상대에게 유리 → 보고용, 본 비교는 S5 test. 사전 기준·해석 규칙 SSOT §6 X1. smoke test `smoke_x1.py`
+- **11/08 X1 결과(보고용)**: LettuceDetect가 dev-L에서 크게 앞섬(응답 AUROC 0.984 vs 0.860, 8토큰 서비스 탐지율 0.787 vs 0.495)이지만 학습 응답 암기 정황(원래 정답 문장 AUROC 0.987 → C1 0.898)이 강해 우열은 S5 test로. HHEM-2.1에는 두 지표 모두 앞섬(+0.063, +0.236). HDM-2는 접근 승인 실패로 제외. 판정기·임계값 변경 없음. T4에서도 돌도록 묶음 크기 자동 조절 추가
 - 11/04 저장소 복구: `544a841`에서 지워진 PROGRESS·RESEARCH_PLAN·빌더·노트북 49개 복구(`6c8f663`), judge.py fp32 수정 재반영(`ca8218b`). 10/21 커밋 `a1addb8`은 저장소에 없어 10/21~10/28 기록은 인계 문서(`docs/handoff/`)로 복원
 
 ---
@@ -201,7 +202,7 @@
 7. 사람 점검 30개(사용자, `r4/r4_human_audit.csv`)
 8. `docs/MODEL_CARD.md` → SSOT §4 교체, v1.0 동결
 - 그 뒤 S4(11/4~11/17): ~~토큰 단위 재판정, tool_calls·usage 통과, 판정기 설정 파일, fail-open·언어 감지~~(11/05) ~~컬렉션·RAG·문서 API 토큰~~(11/05) → Claude 변환, 재생성, `judge_batch`
-- X1 실행(A100, HDM-2는 HF 약관 동의 + `HF_TOKEN` 필요) → 결과 수령 후 SSOT §5·§6 반영
+- ~~X1 실행~~ 완료(11/08). HDM-2는 HF 약관 동의 + `HF_TOKEN` 후 7절만 다시 돌리면 추가 가능
 - S5(11/18~12/1): RAGTruth test 1회(X1 코드 재사용), Itkin·LettuceDetect·Claude/GPT 직접 판정과 비교. S6(12/2~12/15): 데모·보고서·SOFTCON
 
 **열린 문제**
