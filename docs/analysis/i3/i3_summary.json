@@ -1,0 +1,78 @@
+{
+ "chosen": "MEAN",
+ "I3_1": true,
+ "I3_2": true,
+ "I3_3": true,
+ "adopt_conditional": true,
+ "standardize": {
+  "Fb": {
+   "mean": -3.6794357299804688,
+   "std": 2.1870224475860596
+  },
+  "I2": {
+   "mean": -4.456174373626709,
+   "std": 2.400838851928711
+  }
+ },
+ "threshold_svc10_8": 2.991638706756592,
+ "summary": {
+  "labels": "orig",
+  "model": "MEAN",
+  "task": "Summary",
+  "recall_new": 0.29285714285714287,
+  "recall_base": 0.2,
+  "delta": 0.09285714285714286,
+  "ci_lo": 0.021428571428571436,
+  "ci_hi": 0.16428571428571428,
+  "delay_new": 15.0,
+  "delay_base": 11.5,
+  "n_hall": 140,
+  "thr_new": 2.991638706756592,
+  "thr_base": 3.968751
+ },
+ "all": {
+  "labels": "orig",
+  "model": "MEAN",
+  "task": "all",
+  "recall_new": 0.5434782608695652,
+  "recall_base": 0.5067934782608695,
+  "delta": 0.036684782608695676,
+  "ci_lo": 0.008152173913043459,
+  "ci_hi": 0.06657608695652173,
+  "delay_new": 9.0,
+  "delay_base": 13.0,
+  "n_hall": 736,
+  "thr_new": 2.991638706756592,
+  "thr_base": 3.968751
+ },
+ "C1": {
+  "labels": "C1",
+  "model": "MEAN",
+  "task": "all",
+  "recall_new": 0.590034965034965,
+  "recall_base": 0.541083916083916,
+  "delta": 0.04895104895104896,
+  "ci_lo": 0.02534965034965031,
+  "ci_hi": 0.07257430069930064,
+  "delay_new": 10.0,
+  "delay_base": 21.0,
+  "n_hall": 1144,
+  "thr_new": 2.15535144670105,
+  "thr_base": 2.500001
+ },
+ "Data2txt": {
+  "labels": "orig",
+  "model": "MEAN",
+  "task": "Data2txt",
+  "recall_new": 0.6658476658476659,
+  "recall_base": 0.6633906633906634,
+  "delta": 0.002457002457002422,
+  "ci_lo": -0.03439803439803435,
+  "ci_hi": 0.03685503685503688,
+  "delay_new": 7.0,
+  "delay_base": 10.0,
+  "n_hall": 407,
+  "thr_new": 2.991638706756592,
+  "thr_base": 3.968751
+ }
+}
