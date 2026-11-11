@@ -1,0 +1,64 @@
+{
+ "n_pick_resp": 1500,
+ "n_pick_sent": 2877,
+ "cands": {
+  "para": 2828,
+  "contra": 2775
+ },
+ "passed": {
+  "contra": 2673,
+  "para": 2556
+ },
+ "n_each": 1500,
+ "K1_0_count": true,
+ "cost_usd": {
+  "syn_gen.json": 4.73,
+  "syn_verify.json": 12.59
+ },
+ "by_task": {
+  "QA": {
+   "contra": 852,
+   "para": 860
+  },
+  "Summary": {
+   "contra": 910,
+   "para": 862
+  },
+  "Data2txt": {
+   "contra": 911,
+   "para": 834
+  }
+ },
+ "gen_kinds": {
+  "detail_flip": 683,
+  "field_mismatch": 222,
+  "negation": 207,
+  "number": 166,
+  "time": 51,
+  "role_swap": 48,
+  "wrong_item": 22,
+  "entity_swap": 20,
+  "attribution": 17,
+  "flipped_review_detail": 13,
+  "wrong_entity": 11,
+  "cause_effect": 7,
+  "order": 5,
+  "condition": 4,
+  "wrong_passage": 3,
+  "quantity": 3,
+  "cause_change": 2,
+  "flipped_detail": 2,
+  "cause_effect_flip": 2,
+  "source_mismatch": 2,
+  "entity_detail": 1,
+  "step_change": 1,
+  "flipped review detail": 1,
+  "cause_swap": 1,
+  "unsupported_fact_conflict": 1,
+  "procedure_change": 1,
+  "step_order": 1,
+  "certainty_flip": 1,
+  "added_step": 1,
+  "wrong_method": 1
+ }
+}

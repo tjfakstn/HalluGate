@@ -1,0 +1,242 @@
+[
+ {
+  "qid": "q01",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q02",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q03",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q04",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q05",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q06",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q07",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q08",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q09",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q10",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q11",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q12",
+  "task": "QA",
+  "label": "unsupported",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q13",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q14",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q15",
+  "task": "Data2txt",
+  "label": "unsupported",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q16",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q17",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q18",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q19",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q20",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q21",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q22",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q23",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q24",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q25",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q26",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q27",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q28",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q29",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q30",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q31",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q32",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q33",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q34",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q35",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q36",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q37",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q38",
+  "task": "QA",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q39",
+  "task": "Data2txt",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ },
+ {
+  "qid": "q40",
+  "task": "Summary",
+  "label": "contradiction",
+  "span_overlaps_changed": true
+ }
+]
