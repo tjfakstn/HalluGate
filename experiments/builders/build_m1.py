@@ -442,7 +442,33 @@ files.download(zp)
 nb = {"cells": cells, "metadata": {"accelerator": "GPU", "colab": {"provenance": [], "gpuType": "L4"},
       "kernelspec": {"display_name": "Python 3", "name": "python3"}, "language_info": {"name": "python"}},
       "nbformat": 4, "nbformat_minor": 0}
+def _src(c): return c['source'] if isinstance(c['source'], str) else ''.join(c['source'])
+# API 셀(키·배치 제출·비용)은 K1 합성 노트북도 그대로 쓴다
+M1_API = next(_src(c) for c in cells if _src(c).startswith('import anthropic')).split('# 형식 확인')[0]
+
+def fresh_cells():
+    # K1 평가 세트: 같은 근거·두 모델·같은 흐름으로 다시 생성(누구도 보지 않은 응답). 드라이브 m1_fresh/, M1-2 없음
+    reps = [("os.path.join(OUT, 'm1')", "os.path.join(OUT, 'm1_fresh')"),
+            ("if M1_0 and not M1_1:", "if False:                    # m1_fresh: 재보정(M1-2) 없음"),
+            ("/content/m1_results", "/content/m1_fresh_results"), ("/content/m1_local", "/content/m1_fresh_local")]
+    out = [{"cell_type": "markdown", "metadata": {}, "source":
+            "# M1 새 생성 — K1 평가 세트 (`m1_fresh/`)\n\n"
+            "아래는 M1 노트북과 **같은 코드**를 드라이브 `m1_fresh/`에 다시 돌린다. 같은 dev-L 근거·두 모델·같은 흐름으로 **응답을 새로 생성**해 "
+            "누구도 보지 않은 평가 세트를 만든다(SSOT §6 K1 주 평가). 재보정(M1-2)은 하지 않는다. "
+            "출력되는 M1-0·M1-1 판정은 **참고용**이며 M1 결과를 바꾸지 않는다. 기존 조합의 점수는 이 실행에서 저장되고, K1 학습 노트북이 새 판정기 점수를 더한다.\n\n"
+            "> 런타임 GPU(아무거나), `ANTHROPIC_API_KEY` 필요, 비용 약 $5(M1 실측 $4.95). 끝나면 `m1_fresh_results.zip`을 내려받는다(올릴 필요 없음 — K1 학습 노트북이 드라이브에서 읽음)."}]
+    for c in cells:
+        c = dict(c); src = _src(c)
+        for a, b in reps: src = src.replace(a, b)
+        c['source'] = src; out.append(c)
+    joined = ''.join(_src(c) for c in out)
+    assert "'m1_fresh')" in joined and 'if False:' in joined and "os.path.join(OUT, 'm1')" not in joined
+    return out
+
 if __name__ == '__main__':
     out = os.path.join(NB_DIR, 'm1_modern_llm_check.ipynb')
     json.dump(nb, open(out, 'w'), ensure_ascii=False, indent=1)
     print('wrote', out, len(cells), 'cells')
+    out = os.path.join(NB_DIR, 'm1_fresh_eval.ipynb')
+    json.dump(dict(nb, cells=fresh_cells()), open(out, 'w'), ensure_ascii=False, indent=1)
+    print('wrote', out, len(fresh_cells()), 'cells')
