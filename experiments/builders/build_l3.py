@@ -128,7 +128,7 @@ I3(F1 base + I2 점수 평균)는 요약·전체 탐지율 기준을 모두 넘�
 - 동시 방식의 점수는 차례로 방식과 같아야 한다(최대 차이 ≤ 0.05)
 - A100이 아니면 판정 보류(보고만). 판정기 단독 p50·p95도 보고
 
-> **런타임: A100**. 약 10분. 결과는 드라이브 `Colab Notebooks/HalluGate/l3/`와 `l3_results.zip`.
+> **런타임: A100** (다른 GPU면 1번 셀에서 멈춤). 약 10분. 결과는 드라이브 `Colab Notebooks/HalluGate/l3/`와 `l3_results.zip`.
 """)
 
 md("## 1. 환경 준비")
@@ -150,6 +150,8 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 GPU = torch.cuda.get_device_name(0) if DEVICE == 'cuda' else 'cpu'
 COMBO = """ + repr(COMBO) + r"""
 print('device', GPU, '| 조합 상수(I3)', COMBO)
+assert 'A100' in GPU, (f'지금 GPU는 {GPU}. 런타임 > 런타임 유형 변경 > A100 GPU 선택 후 다시 모두 실행하세요. '
+                       'A100이 안 잡히면 이 셀의 assert 줄만 지우고 돌리면 보고용으로 측정됩니다(판정 보류).')
 """)
 
 md("## 2. 판정 입력 300개")
