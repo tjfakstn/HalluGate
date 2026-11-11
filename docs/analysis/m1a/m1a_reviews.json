@@ -1,0 +1,751 @@
+[
+{
+"cid": "devL-haiku-13600",
+"i": 11,
+"validity": "real",
+"type": "contradiction",
+"note": "Reviewer says they literally gagged, not nearly gagged."
+},
+{
+"cid": "devL-sonnet-15449",
+"i": 7,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Ref calls keyboard primary input device; keystrokes/commands is mild elaboration."
+},
+{
+"cid": "devL-haiku-14595",
+"i": 10,
+"validity": "ambiguous",
+"type": "contradiction",
+"note": "Prices raised because of deals; 'during' slightly shifts the causal relation."
+},
+{
+"cid": "devL-haiku-14106",
+"i": 11,
+"validity": "real",
+"type": "contradiction",
+"note": "Same 5-star reviewer reported closure; misattributed to another reviewer."
+},
+{
+"cid": "devL-haiku-14836",
+"i": 10,
+"validity": "ambiguous",
+"type": "other",
+"note": "Corn faulted for taste/price, salad for missing meat; 'portion' loosely fits."
+},
+{
+"cid": "devL-haiku-14251",
+"i": 11,
+"validity": "real",
+"type": "contradiction",
+"note": "Nachos and service complaints come from the same reviewer, not another."
+},
+{
+"cid": "devL-haiku-14071",
+"i": 9,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "Staff described as annoyed/bored, ill-prepared; 'rushed' is an interpretation."
+},
+{
+"cid": "devL-sonnet-14214",
+"i": 2,
+"validity": "ambiguous",
+"type": "numeric",
+"note": "Reviews average ~1.3; 2.5 rating not derived from provided reviews."
+},
+{
+"cid": "devL-haiku-14173",
+"i": 9,
+"validity": "real",
+"type": "contradiction",
+"note": "Average priced in a high-priced town means cheaper than area."
+},
+{
+"cid": "devL-haiku-11942",
+"i": 9,
+"validity": "real",
+"type": "contradiction",
+"note": "O'Flaherty directed Foreign Service; Norlander was managing editor."
+},
+{
+"cid": "devL-haiku-13898",
+"i": 1,
+"validity": "real",
+"type": "other",
+"note": "'Almost Heaven' is headline phrase, never stated as tree's nickname."
+},
+{
+"cid": "devL-haiku-14407",
+"i": 11,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Ref says not all yogurts have cultures; checking label is inferred advice."
+},
+{
+"cid": "devL-haiku-14407",
+"i": 13,
+"validity": "ambiguous",
+"type": "contradiction",
+"note": "Passage 2 pours cooled milk into yogurt jars; sentence conflates passage 3 mixture."
+},
+{
+"cid": "devL-haiku-15598",
+"i": 4,
+"validity": "ambiguous",
+"type": "other",
+"note": "Injuries attributed to collisions overall, not specifically both in overturned SUV."
+},
+{
+"cid": "devL-sonnet-12170",
+"i": 9,
+"validity": "ambiguous",
+"type": "contradiction",
+"note": "Passage 1 gives 8 p.m. ET and Dec. 19; scope of 'this' unclear."
+},
+{
+"cid": "devL-haiku-14554",
+"i": 11,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "'Generous' embellishes; merges happy-hour time and panini from two reviewers."
+},
+{
+"cid": "devL-haiku-14971",
+"i": 12,
+"validity": "real",
+"type": "contradiction",
+"note": "Same tartar-sauce reviewer said this, not another reviewer."
+},
+{
+"cid": "devL-sonnet-15104",
+"i": 12,
+"validity": "real",
+"type": "outside_fact",
+"note": "Reference gives no advice to keep ingredients simple."
+},
+{
+"cid": "devL-haiku-15569",
+"i": 5,
+"validity": "real",
+"type": "contradiction",
+"note": "Ref pours cup water into teapot to adjust temperature, not discarding it."
+},
+{
+"cid": "devL-haiku-14305",
+"i": 10,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Roast-versus-steam rationale not in reference; plausible added explanation."
+},
+{
+"cid": "devL-haiku-14061",
+"i": 4,
+"validity": "ambiguous",
+"type": "other",
+"note": "Family style describes restaurant overall; attaching it to the chicken is loose."
+},
+{
+"cid": "devL-haiku-14061",
+"i": 5,
+"validity": "real",
+"type": "contradiction",
+"note": "Top-tier service and nice servers come from two different reviewers."
+},
+{
+"cid": "devL-haiku-14768",
+"i": 11,
+"validity": "real",
+"type": "contradiction",
+"note": "Same 3-star reviewer made both coffee comments, not another reviewer."
+},
+{
+"cid": "devL-sonnet-14606",
+"i": 13,
+"validity": "real",
+"type": "numeric",
+"note": "First reviewer only recommended; only two said they would return."
+},
+{
+"cid": "devL-haiku-13890",
+"i": 7,
+"validity": "real",
+"type": "outside_fact",
+"note": "Housing capacity never mentioned in the article."
+},
+{
+"cid": "devL-sonnet-14971",
+"i": 13,
+"validity": "real",
+"type": "contradiction",
+"note": "Tartar sauce request came from same reviewer as creamy poke comment."
+},
+{
+"cid": "devL-haiku-14514",
+"i": 8,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "Comfort said for lunch only; dinner from different review about tasty food."
+},
+{
+"cid": "devL-sonnet-11789",
+"i": 1,
+"validity": "real",
+"type": "outside_fact",
+"note": "Reference never says author became Ohio's governor."
+},
+{
+"cid": "devL-haiku-13753",
+"i": 8,
+"validity": "real",
+"type": "contradiction",
+"note": "Short wait and coffee refills from same reviewer, not another."
+},
+{
+"cid": "devL-haiku-14232",
+"i": 6,
+"validity": "ambiguous",
+"type": "other",
+"note": "Garage/street/valet false, lot/validated null; 'not specified' partly defensible."
+},
+{
+"cid": "devL-sonnet-13826",
+"i": 3,
+"validity": "ambiguous",
+"type": "other",
+"note": "Reference: fund military, keep allies secure; phrasing implies funding allies."
+},
+{
+"cid": "devL-haiku-14159",
+"i": 10,
+"validity": "real",
+"type": "contradiction",
+"note": "Reviewer called the food a mess, not the restaurant."
+},
+{
+"cid": "devL-haiku-15697",
+"i": 1,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Multan mentioned as work location example; abduction site not stated."
+},
+{
+"cid": "devL-haiku-15697",
+"i": 5,
+"validity": "real",
+"type": "contradiction",
+"note": "Descriptions came from a professor and the university, not colleagues."
+},
+{
+"cid": "devL-haiku-14408",
+"i": 3,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "No muscle-vs-fat comparison; loosely inferable from muscular vs sedentary example."
+},
+{
+"cid": "devL-sonnet-14863",
+"i": 13,
+"validity": "real",
+"type": "generalize",
+"note": "One reviewer only; 'popular' is unsupported embellishment of 'only reason ppl go'."
+},
+{
+"cid": "devL-haiku-13622",
+"i": 4,
+"validity": "real",
+"type": "outside_fact",
+"note": "Garage parking is null (unknown), not false."
+},
+{
+"cid": "devL-sonnet-15077",
+"i": 13,
+"validity": "real",
+"type": "numeric",
+"note": "First reviewer did not advise ordering elsewhere."
+},
+{
+"cid": "devL-haiku-12306",
+"i": 3,
+"validity": "real",
+"type": "contradiction",
+"note": "'passage 3:12am' means 12am; 3:12am misreads passage label."
+},
+{
+"cid": "devL-haiku-12306",
+"i": 6,
+"validity": "real",
+"type": "contradiction",
+"note": "'1 0am' is list item 1 at 0am, consistent with '2 3am'."
+},
+{
+"cid": "devL-haiku-12035",
+"i": 4,
+"validity": "real",
+"type": "contradiction",
+"note": "Narrator says Muslim blood will be avenged, not the victims'."
+},
+{
+"cid": "devL-haiku-14784",
+"i": 5,
+"validity": "real",
+"type": "numeric",
+"note": "Reference never says the 3.0 rating derives from these three reviews."
+},
+{
+"cid": "devL-haiku-15726",
+"i": 7,
+"validity": "ambiguous",
+"type": "other",
+"note": "Wide-open claim came from Scheffler, not unnamed analysts; attribution loosened."
+},
+{
+"cid": "devL-haiku-14636",
+"i": 8,
+"validity": "real",
+"type": "numeric",
+"note": "Only one review mentions all items; King's Cake review mentions none."
+},
+{
+"cid": "devL-haiku-14493",
+"i": 5,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "Data says good for groups; 'good service' is a wording embellishment."
+},
+{
+"cid": "devL-haiku-14493",
+"i": 12,
+"validity": "real",
+"type": "contradiction",
+"note": "Patio catcalling is in the same COVID review, not another."
+},
+{
+"cid": "devL-haiku-12061",
+"i": 3,
+"validity": "ambiguous",
+"type": "other",
+"note": "Reference says U.S. citizens like herself, not women; minor reframing."
+},
+{
+"cid": "devL-haiku-12061",
+"i": 4,
+"validity": "real",
+"type": "outside_fact",
+"note": "Reference says she was looking for propane, not that she bought it."
+},
+{
+"cid": "devL-sonnet-12037",
+"i": 6,
+"validity": "ambiguous",
+"type": "other",
+"note": "Marijuana link to draft implied; causal claim for all issues is inferred."
+},
+{
+"cid": "devL-haiku-15736",
+"i": 4,
+"validity": "ambiguous",
+"type": "other",
+"note": "Reference notes county policing problems, not explicitly others distrusting merger."
+},
+{
+"cid": "devL-sonnet-14164",
+"i": 11,
+"validity": "real",
+"type": "contradiction",
+"note": "Manager cited Covid staffing; reviewer explicitly rejected that and blamed rude staff."
+},
+{
+"cid": "devL-haiku-14883",
+"i": 5,
+"validity": "ambiguous",
+"type": "other",
+"note": "Classy is null; 'not listed as classy' literally true but implies false."
+},
+{
+"cid": "devL-haiku-14883",
+"i": 10,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "Review says everyone was nice; staff role inferred, reasonable reading."
+},
+{
+"cid": "devL-haiku-14979",
+"i": 11,
+"validity": "real",
+"type": "numeric",
+"note": "Only 5-star review praised sandwiches, soups, friendly staff; 4-star did not."
+},
+{
+"cid": "devL-haiku-14979",
+"i": 14,
+"validity": "ambiguous",
+"type": "other",
+"note": "Review advises asking toasted; sentence wrongly makes availability conditional."
+},
+{
+"cid": "devL-haiku-14999",
+"i": 11,
+"validity": "real",
+"type": "contradiction",
+"note": "Reviewer was already seated for 10 minutes, not waiting to be seated."
+},
+{
+"cid": "devL-haiku-14517",
+"i": 11,
+"validity": "real",
+"type": "contradiction",
+"note": "Steak ordered by first reviewer's boyfriend, not a separate reviewer."
+},
+{
+"cid": "devL-haiku-11836",
+"i": 9,
+"validity": "real",
+"type": "contradiction",
+"note": "Parents stayed on ground floor, going to garden only during tremors."
+},
+{
+"cid": "devL-haiku-11836",
+"i": 10,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "Shaken and exhausted not stated; plausible embellishment of sleepless night."
+},
+{
+"cid": "devL-haiku-14666",
+"i": 7,
+"validity": "real",
+"type": "contradiction",
+"note": "Listing explicitly states WiFi is 'no'."
+},
+{
+"cid": "devL-haiku-14645",
+"i": 5,
+"validity": "ambiguous",
+"type": "other",
+"note": "Monday listed as 0:0-0:0 placeholder; 'no hours' is interpretive."
+},
+{
+"cid": "devL-haiku-14645",
+"i": 10,
+"validity": "real",
+"type": "contradiction",
+"note": "Eggo and matcha latte come from two different reviewers."
+},
+{
+"cid": "devL-sonnet-13723",
+"i": 14,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "First reviewer's order mix-up arguably communication; not explicitly cited."
+},
+{
+"cid": "devL-haiku-15077",
+"i": 12,
+"validity": "real",
+"type": "numeric",
+"note": "Only one other reviewer said to skip; app-order reviewer did not."
+},
+{
+"cid": "devL-haiku-15183",
+"i": 10,
+"validity": "real",
+"type": "outside_fact",
+"note": "Reference never mentions a meat thermometer."
+},
+{
+"cid": "devL-haiku-14944",
+"i": 2,
+"validity": "real",
+"type": "numeric",
+"note": "3.5 rating not stated as derived from these three reviews (avg 4.33)."
+},
+{
+"cid": "devL-haiku-14944",
+"i": 10,
+"validity": "real",
+"type": "contradiction",
+"note": "Interior criticism is from the same 3-star reviewer, not another."
+},
+{
+"cid": "devL-haiku-14594",
+"i": 6,
+"validity": "real",
+"type": "numeric",
+"note": "3.5 rating not tied to these reviews; they average about 2.7."
+},
+{
+"cid": "devL-haiku-14594",
+"i": 10,
+"validity": "real",
+"type": "contradiction",
+"note": "Soups praised by different reviewers; pozole critic is cauliflower-soup reviewer."
+},
+{
+"cid": "devL-haiku-14370",
+"i": 3,
+"validity": "real",
+"type": "outside_fact",
+"note": "Investment risk and employer funding obligation not mentioned in passages."
+},
+{
+"cid": "devL-haiku-14370",
+"i": 5,
+"validity": "real",
+"type": "contradiction",
+"note": "Passage: employee contributes, sometimes employer; roles reversed."
+},
+{
+"cid": "devL-haiku-14370",
+"i": 7,
+"validity": "real",
+"type": "outside_fact",
+"note": "Passage says payout uncertain; dependence on performance is added."
+},
+{
+"cid": "devL-haiku-14214",
+"i": 7,
+"validity": "real",
+"type": "contradiction",
+"note": "All three reviews are negative (1, 1, 2 stars), not mixed."
+},
+{
+"cid": "devL-sonnet-11386",
+"i": 6,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "Reference says 'sometimes' several families; 'often' is mild exaggeration."
+},
+{
+"cid": "devL-haiku-14687",
+"i": 9,
+"validity": "real",
+"type": "contradiction",
+"note": "Reviewer did not recommend McDonald's for tacos; misreads the review."
+},
+{
+"cid": "devL-haiku-11789",
+"i": 4,
+"validity": "real",
+"type": "contradiction",
+"note": "Surplus refers to state budget, not rainy day fund balance."
+},
+{
+"cid": "devL-haiku-12014",
+"i": 2,
+"validity": "real",
+"type": "contradiction",
+"note": "Reference says viewers watched, not police."
+},
+{
+"cid": "devL-haiku-14534",
+"i": 10,
+"validity": "real",
+"type": "contradiction",
+"note": "Only one review dates closure to 2013; other gives no date."
+},
+{
+"cid": "devL-haiku-15087",
+"i": 11,
+"validity": "real",
+"type": "contradiction",
+"note": "Malt vinegar mentioned by the same patty-melt reviewer, not another."
+},
+{
+"cid": "devL-haiku-12089",
+"i": 4,
+"validity": "real",
+"type": "contradiction",
+"note": "Supreme Court ruling is article context, not something Santorum said."
+},
+{
+"cid": "devL-haiku-12324",
+"i": 21,
+"validity": "real",
+"type": "outside_fact",
+"note": "Reference does not specify landfill counts are for the U.S."
+},
+{
+"cid": "devL-haiku-15005",
+"i": 9,
+"validity": "real",
+"type": "contradiction",
+"note": "Reviewer did not try non-alcoholic pairings; only sounded enticing."
+},
+{
+"cid": "devL-haiku-15005",
+"i": 11,
+"validity": "real",
+"type": "contradiction",
+"note": "Wagyu comment is from the same reviewer who discussed pricing."
+},
+{
+"cid": "devL-haiku-13997",
+"i": 11,
+"validity": "real",
+"type": "numeric",
+"note": "Only one reviewer expressed liking the concept."
+},
+{
+"cid": "devL-sonnet-14294",
+"i": 17,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Passage says spray cloth; explicit 'not the screen' is a reasonable inference."
+},
+{
+"cid": "devL-sonnet-15110",
+"i": 19,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Hedged speculation about blanched potatoes not in passages."
+},
+{
+"cid": "devL-haiku-12303",
+"i": 8,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "'Thickest part' is minor embellishment; reference says insert fork into salmon."
+},
+{
+"cid": "devL-haiku-13670",
+"i": 10,
+"validity": "real",
+"type": "contradiction",
+"note": "Waitress forgot to take back the bill, not to bring it."
+},
+{
+"cid": "devL-sonnet-15365",
+"i": 11,
+"validity": "real",
+"type": "outside_fact",
+"note": "Symptom-based advice to see doctor/PT absent from passages."
+},
+{
+"cid": "devL-haiku-14380",
+"i": 15,
+"validity": "real",
+"type": "contradiction",
+"note": "Reference arranges onion slices on grill, not the legs."
+},
+{
+"cid": "devL-haiku-15065",
+"i": 3,
+"validity": "real",
+"type": "contradiction",
+"note": "BusinessParking data present (garage, validated, valet false)."
+},
+{
+"cid": "devL-haiku-14097",
+"i": 5,
+"validity": "real",
+"type": "outside_fact",
+"note": "Takeout is null; unavailability not stated."
+},
+{
+"cid": "devL-haiku-14097",
+"i": 6,
+"validity": "real",
+"type": "contradiction",
+"note": "Ambience casual is false; reviewers say divey, not casual."
+},
+{
+"cid": "devL-sonnet-14853",
+"i": 8,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "Only 2013 reviews mention ownership change; loose grouping with 2012."
+},
+{
+"cid": "devL-sonnet-14251",
+"i": 8,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Popcorn mentioned at happy hour; free not stated but plausible."
+},
+{
+"cid": "devL-sonnet-14173",
+"i": 11,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Noleta-to-Goleta interpretation relies on outside knowledge."
+},
+{
+"cid": "devL-haiku-14606",
+"i": 9,
+"validity": "real",
+"type": "contradiction",
+"note": "Pricey remark from a different reviewer; misattributed to one."
+},
+{
+"cid": "devL-haiku-15365",
+"i": 8,
+"validity": "real",
+"type": "outside_fact",
+"note": "Medical referral advice and symptoms not in passages."
+},
+{
+"cid": "devL-sonnet-14370",
+"i": 7,
+"validity": "ambiguous",
+"type": "other",
+"note": "Fragment unclear which plan union leaders disfavor; response hedges."
+},
+{
+"cid": "devL-haiku-13771",
+"i": 12,
+"validity": "real",
+"type": "contradiction",
+"note": "Biggest-location remark came from second reviewer, not third."
+},
+{
+"cid": "devL-haiku-14522",
+"i": 13,
+"validity": "real",
+"type": "contradiction",
+"note": "Same 1-star reviewer made gratuity and clam complaints."
+},
+{
+"cid": "devL-haiku-14781",
+"i": 6,
+"validity": "real",
+"type": "contradiction",
+"note": "4-star review did not praise coffee, service, or location."
+},
+{
+"cid": "devL-sonnet-15033",
+"i": 8,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Mark and Melissa named but not stated to be owners."
+},
+{
+"cid": "devL-haiku-12443",
+"i": 2,
+"validity": "real",
+"type": "numeric",
+"note": "Says two versions; reference and response describe three."
+},
+{
+"cid": "devL-haiku-15200",
+"i": 16,
+"validity": "real",
+"type": "outside_fact",
+"note": "Reflecting on why you started not in reference."
+},
+{
+"cid": "devL-sonnet-14666",
+"i": 12,
+"validity": "ambiguous",
+"type": "outside_fact",
+"note": "Second visit's weekday-lunch timing not specified."
+},
+{
+"cid": "devL-haiku-12052",
+"i": 7,
+"validity": "ambiguous",
+"type": "generalize",
+"note": "Reference cites thousands injured or killed; saving lives is inference."
+}
+]
