@@ -49,7 +49,8 @@ print(f'학습 근거 후보 {len(_pool)}개 중 {len(SIDS["train"])}개 (Random
 
 K2A_PREP = r"""
 # 묶음별 설정: 생성 개수(근거·모델마다), 정답 모델, 판정 지점 점수 저장 여부
-SPLITS = {'train': {'n': 1, 'labeler': 'claude-sonnet-5-5', 'score': False},     # 학습 정답은 평가자(Opus)와 다른 모델 (R4b 원칙)
+SPLITS = {'train': {'n': {'haiku': 2, 'sonnet': 1}, 'labeler': 'claude-sonnet-5-5', 'score': False},     # 학습 정답은 평가자(Opus)와 다른 모델 (R4b 원칙)
+          # 학습 묶음: 파일럿(11/12) 결과 Sonnet 정답의 환각 문장이 응답당 0.10개로 적어, 환각이 많은 Haiku 응답을 근거당 1개 더 (SSOT §7)
           'calM': {'n': 2, 'labeler': 'claude-opus-5-5', 'score': True},
           'devM': {'n': 2, 'labeler': 'claude-opus-5-5', 'score': True}}
 
@@ -58,8 +59,9 @@ def label_params_k2(c, text, model):
     return p
 
 def expand(base, n):
-    # 같은 요청을 n번 (배치 기본 설정이라 응답이 서로 다름). id 끝에 -0, -1
-    return {f'{cid}-{k}': dict(c) for cid, c in base.items() for k in range(n)}
+    # 같은 요청을 n번 (배치 기본 설정이라 응답이 서로 다름). id 끝에 -0, -1. n이 dict면 생성 모델마다 개수
+    nn = lambda c: n[c['gen']] if isinstance(n, dict) else n
+    return {f'{cid}-{k}': dict(c) for cid, c in base.items() for k in range(nn(c))}
 
 def prepare_split(split):
     cp = os.path.join(K2_DIR, f'cases_{split}.json')
@@ -71,6 +73,11 @@ def prepare_split(split):
             print(f'컬렉션 {coll}: QA 근거 {build_collection(store, coll, SIDS[split], sources)}개 등록')
         cases = expand(make_cases(split, SIDS[split], sources, store, coll), SPLITS[split]['n'])
         save_json(cases, cp)
+    else:                                      # 설정이 바뀌어 요청이 늘었으면 같은 요청(-0)을 복사해 추가 (검색 결과 그대로)
+        base = {cid[:-2]: c for cid, c in cases.items() if cid.endswith('-0')}
+        add = {k: v for k, v in expand(base, SPLITS[split]['n']).items() if k not in cases}
+        if add:
+            cases.update(add); save_json(cases, cp); print(f'{split}: 요청 {len(add)}개 추가')
     qa = [c for c in cases.values() if c['flow'] == 'collection' and c['gen'] == 'haiku']
     print(f"{split}: 생성 요청 {len(cases)}개 | QA 검색에 원래 근거가 들어간 비율 {np.mean([c['gold_in'] for c in qa]) if qa else float('nan'):.3f}")
     return cases
@@ -132,16 +139,21 @@ def run_split(split, ids=None, per_gen=0.003, per_label=None):
 """
 
 K2A_PILOT = r"""
-def pilot_projection(cases_all, gens, raw, labels, n_total):
-    # 파일럿 응답의 실제 사용량으로 묶음별 비용과 학습 H 문장 수를 내다본다
-    ids = [c for c in raw if c in gens]
-    g_cost = cost({c: gens[c] for c in gens}) / max(len(gens), 1)
-    l_cost = cost({c: raw[c] for c in ids}) / max(len(ids), 1)          # Sonnet 정답 응답당
-    h_per = sum(sum(v['label'] == 'H' for v in labs.values()) for labs in labels.values()) / max(len(labels), 1)
+def pilot_projection(cases_all, gens, raw, labels, counts):
+    # 파일럿 응답의 실제 사용량으로 생성 모델별 단가·환각 문장 비율을 재고, 묶음별 비용과 학습 H 문장 수를 내다본다
+    # counts: {묶음: {생성 모델: 응답 수}}
+    gen_of = lambda c: cases_all['train'][c]['gen']
+    per = {}
+    for g in sorted({gen_of(c) for c in gens}):
+        gi = [c for c in gens if gen_of(c) == g]; li = [c for c in raw if c in gens and gen_of(c) == g]; hi = [c for c in labels if gen_of(c) == g]
+        per[g] = {'n': len(gi), 'gen': cost({c: gens[c] for c in gi}) / max(len(gi), 1),
+                  'label': cost({c: raw[c] for c in li}) / max(len(li), 1),                     # Sonnet 정답 응답당
+                  'H': sum(sum(v['label'] == 'H' for v in labels[c].values()) for c in hi) / max(len(hi), 1)}
     opus_ratio = 2.0                                                     # 배치 단가 Opus/Sonnet ($2/$10 vs $1/$5)
-    proj = {sp: n * (g_cost + l_cost * (opus_ratio if SPLITS[sp]['labeler'] == 'claude-opus-5-5' else 1.0)) for sp, n in n_total.items()}
-    return {'gen_per_resp': g_cost, 'sonnet_label_per_resp': l_cost, 'H_per_resp': h_per,
-            'proj_cost': proj, 'proj_total': sum(proj.values()), 'proj_train_H': h_per * n_total['train']}
+    proj = {sp: sum(n * (per[g]['gen'] + per[g]['label'] * (opus_ratio if SPLITS[sp]['labeler'] == 'claude-opus-5-5' else 1.0))
+                    for g, n in cnt.items()) for sp, cnt in counts.items()}
+    return {'per_gen': per, 'proj_cost': proj, 'proj_total': sum(proj.values()),
+            'proj_train_H': sum(n * per[g]['H'] for g, n in counts['train'].items())}
 """
 
 K2A_CHECK = r"""
@@ -184,7 +196,7 @@ M1에서 배포 판정기는 최신 Claude 응답의 환각을 **14%**밖에 잡
 
 | 묶음 | 근거 | 생성 | 정답 | 판정 지점 점수 |
 |---|---|---|---|---|
-| **train** (학습) | RAGTruth train 분할 근거 중 cal-L·dev-L 근거를 뺀 것, 최대 2,000개(Random(2031)) | 모델마다 1개 | `claude-sonnet-5-5` (평가자와 다른 모델) | 없음 |
+| **train** (학습) | RAGTruth train 분할 근거 중 cal-L·dev-L 근거를 뺀 것, 최대 2,000개(Random(2031)) | **Haiku 2개 + Sonnet 1개** (11/12 파일럿 뒤 변경) | `claude-sonnet-5-5` (평가자와 다른 모델) | 없음 |
 | **calM** (임계값 B 보정) | cal-L 근거 | 모델마다 2개 | `claude-opus-5-5` | 기존 조합 |
 | **devM** (주 평가) | dev-L 근거 | 모델마다 2개(M1·m1_fresh와 다른 새 응답) | `claude-opus-5-5` | 기존 조합 |
 
@@ -234,22 +246,27 @@ for g in GENS:
 est = {sp: len(c) * (0.00175 + (0.0075 if SPLITS[sp]['labeler'] == 'claude-opus-5-5' else 0.00375)) for sp, c in CASES.items()}
 print('예상 비용(M1 실측 단가):', {k: round(v, 1) for k, v in est.items()}, f'합계 약 ${sum(est.values()):.0f}')
 """)
-md("""## 5. 파일럿 — 학습 묶음 150건으로 실제 비용·환각 수를 재고, 기준에 못 미치면 여기서 멈춤
+md("""## 5. 파일럿 — 학습 묶음 300건(처음 150 + Haiku 추가분 150)으로 실제 비용·환각 수를 재고, 기준에 못 미치면 여기서 멈춤
 
-전체를 제출하기 전에 학습 묶음에서 150건(Random(2033))만 먼저 생성·정답을 받아 **응답당 실제 비용**과 **환각 문장 비율**을 잰다.
+전체를 제출하기 전에 학습 묶음에서 처음 파일럿 150건(Random(2033), 이미 받음)과 새로 추가한 Haiku 응답 150건(Random(2035))만 먼저 받아 **생성 모델별 응답당 실제 비용**과 **환각 문장 비율**을 잰다.
 예상 총비용이 상한($50)을 넘거나, 예상 학습 H 문장이 K2-0 기준(500)의 1.2배(600)에 못 미치면 **나머지를 제출하지 않고 멈춘다**(이때까지 약 $1).
 파일럿 결과는 버리지 않고 본 실행에 그대로 들어간다.""")
 code(K2A_RUN + K2A_PILOT + r"""
-PILOT = sorted(random.Random(2033).sample(sorted(CASES['train']), 150))
+# 파일럿 1(처음 150건, 이미 받은 것 그대로) + 파일럿 2(새로 추가한 Haiku 응답 150건)
+PILOT1 = sorted(random.Random(2033).sample(sorted(c for c in CASES['train'] if c.endswith('-0')), 150))
+PILOT2 = sorted(random.Random(2035).sample(sorted(c for c in CASES['train'] if c.endswith('-1')), 150))
+PILOT = PILOT1 + PILOT2
 pg, pl, _ = run_split('train', ids=PILOT, per_gen=0.01, per_label=0.01)
-_raw = load_json(os.path.join(K2_DIR, 'label_train.json'))
-PJ = pilot_projection(CASES, {c: load_json(os.path.join(K2_DIR, 'gen_train.json'))[c] for c in PILOT},
-                      {c: _raw[c] for c in PILOT if c in _raw}, pl, {sp: len(c) for sp, c in CASES.items()})
+_gen, _raw = load_json(os.path.join(K2_DIR, 'gen_train.json')), load_json(os.path.join(K2_DIR, 'label_train.json'))
+COUNTS = {sp: {g: sum(x['gen'] == g for x in c.values()) for g in GENS} for sp, c in CASES.items()}
+PJ = pilot_projection(CASES, {c: _gen[c] for c in PILOT if c in _gen}, {c: _raw[c] for c in PILOT if c in _raw}, pl, COUNTS)
+print('요청 수', COUNTS)
 print(json.dumps(PJ, ensure_ascii=False, indent=1, default=float))
 print(f"예상 총비용 ${PJ['proj_total']:.1f} (상한 ${COST_CAP:.0f}) | 예상 학습 H 문장 {PJ['proj_train_H']:.0f} (필요 ≥ 600)")
 if PJ['proj_total'] > COST_CAP or PJ['proj_train_H'] < 600:
     raise SystemExit('파일럿 기준 미달 — 나머지는 제출하지 않음. 결과를 Claude Code에 알려 주세요')
-PER = {'gen': PJ['gen_per_resp'] * 1.3, 'sonnet': PJ['sonnet_label_per_resp'] * 1.3, 'opus': PJ['sonnet_label_per_resp'] * 2.0 * 1.3}
+_mx = lambda k: max(v[k] for v in PJ['per_gen'].values())         # 묶음 예산 확인은 비싼 쪽 단가로 (보수적)
+PER = {'gen': _mx('gen') * 1.3, 'sonnet': _mx('label') * 1.3, 'opus': _mx('label') * 2.0 * 1.3}
 """)
 md("## 6. 생성 → 정답 → (calM·devM) 기존 조합 판정")
 code(r"""

@@ -49,12 +49,16 @@ assert CHK['train_H_sent'] == 600 and CHK['calM_clean'] == 490 and CHK['devM_hal
 # 파일럿 예상치·예산 상한
 G['cost'] = lambda res: sum(r['c'] for r in res.values())
 exec(KA.K2A_PILOT, G)
-pg = {f'p{k}': {'c': 0.002} for k in range(10)}
+CA = {'train': {f'p{k}': {'gen': 'haiku' if k < 6 else 'sonnet'} for k in range(10)}}
+pg = {f'p{k}': {'c': 0.001 if k < 6 else 0.003} for k in range(10)}
 pr = {f'p{k}': {'c': 0.004} for k in range(10)}
-plab = {f'p{k}': {1: {'label': 'H' if k < 2 else 'S'}, 2: {'label': 'S'}} for k in range(10)}
-PJ = G['pilot_projection'](None, pg, pr, plab, {'train': 4000, 'calM': 1000, 'devM': 1000})
-assert abs(PJ['proj_cost']['train'] - 4000 * 0.006) < 1e-9 and abs(PJ['proj_cost']['calM'] - 1000 * 0.010) < 1e-9, PJ
-assert abs(PJ['proj_train_H'] - 800) < 1e-9 and abs(PJ['proj_total'] - 44) < 1e-9, PJ
+plab = {f'p{k}': {1: {'label': 'H' if k in (0, 1, 2, 6) else 'S'}, 2: {'label': 'S'}} for k in range(10)}
+PJ = G['pilot_projection'](CA, pg, pr, plab, {'train': {'haiku': 4000, 'sonnet': 2000}, 'calM': {'haiku': 500, 'sonnet': 500}})
+assert abs(PJ['per_gen']['haiku']['H'] - 0.5) < 1e-9 and abs(PJ['per_gen']['sonnet']['H'] - 0.25) < 1e-9, PJ
+assert abs(PJ['proj_train_H'] - (4000 * 0.5 + 2000 * 0.25)) < 1e-9
+assert abs(PJ['proj_cost']['train'] - (4000 * 0.005 + 2000 * 0.007)) < 1e-9 and abs(PJ['proj_cost']['calM'] - (500 * 0.009 + 500 * 0.011)) < 1e-9, PJ
+ex2 = G['expand']({'t-haiku-s1': {'gen': 'haiku'}, 't-sonnet-s1': {'gen': 'sonnet'}}, {'haiku': 2, 'sonnet': 1})
+assert sorted(ex2) == ['t-haiku-s1-0', 't-haiku-s1-1', 't-sonnet-s1-0'], ex2
 tmpd = tempfile.mkdtemp(); G['K2_DIR'] = tmpd
 G['load_json'] = lambda p: json.load(open(p)) if os.path.exists(p) else None
 exec(KA.K2A_RUN.split('def run_split')[0], G)

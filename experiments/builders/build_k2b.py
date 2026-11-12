@@ -40,7 +40,7 @@ _hold = {x['ref_key'] for k in ['calL', 'devL'] for x in pickle.load(open(os.pat
 assert not _hold & {c['sid'] for c in K2T['cases'].values()}, 'K2 학습 응답에 cal-L·dev-L 근거가 섞임'
 _K2L = {'SEG': seg, 'json': json, 're': __import__('re')}
 exec(K2_LABEL_SRC, _K2L)                           # sentences, parse (M1과 같은 코드, 이 노트북 이름과 분리)
-K2_MAX_RATIO = 1.0                                  # 구현 보충(SSOT §6 K2): 최신 LLM 지점 수 ≤ 기존 학습 지점 수 (응답 단위 무작위, 시드 2032)
+K2_MAX_RATIO = 1.0                                  # 구현 보충(SSOT §6 K2): 최신 LLM 지점 수 ≤ 기존 학습 지점 수 (응답 단위, 시드 2032, 환각 응답 우선)
 
 def k2_item(cid, c, text):
     key = c['sid'] if c['flow'] == 'direct' else f'k2q:{cid}'
@@ -82,6 +82,7 @@ for cid, c in K2T['cases'].items():
     K2_RESP.append({'cid': cid, 'key': key, 'ref': c['ref_judge'], 'pts': pts, 'nh': nh, 'gen': c['gen'], 'task': c['task']})
 _n_orig, _n_k2 = len(P_TXT), sum(len(r['pts']) for r in K2_RESP)
 _order = list(range(len(K2_RESP))); random.Random(2032).shuffle(_order)
+_order = [k for k in _order if K2_RESP[k]['nh'] > 0] + [k for k in _order if K2_RESP[k]['nh'] == 0]   # 줄일 때 환각 응답은 먼저 모두 넣고 멀쩡한 응답만 줄임
 K2_USE, _tot = [], 0
 for k in _order:
     if _tot + len(K2_RESP[k]['pts']) > K2_MAX_RATIO * _n_orig: continue
@@ -147,7 +148,7 @@ K2a에서 **최신 LLM이 실제로 쓴 응답**(학습용, Sonnet 문장 정답
 ## 무엇을 하나
 
 1. F1 노트북과 **같은 데이터·설정·시드 42**로 DeBERTa-v3-base 학습, 학습 지점에 K2a 학습 응답의 모든 판정 지점을 더함(정답 문구 위치부터 환각, R4b와 같은 매핑).
-   **구현 보충(실행 전)**: 학습 시간을 F1의 약 2배로 묶기 위해 최신 LLM 지점 수가 기존 학습 지점 수를 넘으면 응답 단위로 무작위(시드 2032)로 줄인다. 후보 1개, 선택 없음
+   **구현 보충(실행 전)**: 학습 시간을 F1의 약 2배로 묶기 위해 최신 LLM 지점 수가 기존 학습 지점 수를 넘으면 응답 단위로 줄인다(시드 2032). 환각 응답은 모두 남기고 멀쩡한 응답만 줄인다. 후보 1개, 선택 없음
 2. 새 F1 점수 + 저장된 I2 점수 → I3와 같은 방식(cal-L 표준화) → **새 조합**. 임계값 A = cal-L 서비스 10%, 임계값 B = cal-M 멀쩡한 응답 표시율 10%(등각)
 3. RAGTruth cal-L에서 기존 조합과 비교(K2-3), dev-L은 보고만
 4. 최신 LLM 세트(dev-M·cal-M·m1_fresh·m1)를 게이트웨이 `judge.py`로 새 F1만 다시 판정(저장 지점·I2 점수 그대로) → K2-0·K2-1·K2-2
