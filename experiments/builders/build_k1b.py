@@ -214,7 +214,11 @@ K1a에서 만든 **최소 수정 모순 + 충실한 바꿔쓰기**를 학습 데
 """)
 
 md("## 1. 환경 준비")
-code(ENV)
+code(ENV + r"""
+# T4(15GB)는 base 학습 중 메모리 부족 → 시작 전에 막는다 (A100 권장, L4 24GB 가능)
+assert DEVICE == 'cuda' and torch.cuda.get_device_properties(0).total_memory >= 20 * 2**30, \
+    f"GPU 메모리 부족: {torch.cuda.get_device_name(0) if DEVICE == 'cuda' else 'CPU'} — 런타임 유형을 A100으로 바꾸고 다시 실행"
+""")
 md("## 2. 데이터와 보정 학습 정답 (F1과 같음)")
 code(F1.DATA)
 code(F1.TRAIN_SPLIT)
