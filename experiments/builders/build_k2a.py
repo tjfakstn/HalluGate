@@ -16,6 +16,13 @@ def sub(s, a, b):
     return s.replace(a, b)
 
 ENV = next(_src(c) for c in M1.cells if _src(c).startswith('SRC = '))
+ENV = sub(ENV, "print('device', GPU, '| 조합 상수(I3)', COMBO)",
+          "print('device', GPU, '| 조합 상수(I3)', COMBO)\n"
+          "# 드라이브 쓰기 점검: 용량이 차면 결과가 조용히 저장되지 않는다(R4c·F1). API 결과를 잃으면 돈을 다시 써야 하므로 시작 전에 막는다\n"
+          "_t = os.path.join(K2_DIR, '_write_test.bin')\n"
+          "with open(_t, 'wb') as f: f.write(os.urandom(50 * 2**20))\n"
+          "assert os.path.getsize(_t) == 50 * 2**20, '드라이브 쓰기 실패 — 휴지통 비우기·용량 확인 후 다시 실행'\n"
+          "os.remove(_t); print('드라이브 50MB 쓰기 정상')")
 ENV = sub(ENV, "R0_DIR, M1_DIR = os.path.join(OUT, 'r0'), os.path.join(OUT, 'm1')\nos.makedirs(M1_DIR, exist_ok=True)",
           "R0_DIR, K2_DIR = os.path.join(OUT, 'r0'), os.path.join(OUT, 'k2')\nos.makedirs(K2_DIR, exist_ok=True)")
 
@@ -70,12 +77,33 @@ def prepare_split(split):
 """
 
 K2A_RUN = r"""
-def run_split(split):
+COST_CAP = 50.0          # 이 노트북 전체 API 사용 상한($, 배치 단가·실제 사용 토큰 기준). 넘을 것 같으면 제출 전에 멈춘다
+
+def spent():
+    tot = 0.0
+    for f in os.listdir(K2_DIR):
+        if f.startswith(('gen_', 'label_')) and f.endswith('.json') and '_batches' not in f:
+            tot += cost(load_json(os.path.join(K2_DIR, f)) or {})
+    return tot
+
+def guard(n_new, per_req):
+    # 새로 제출할 요청 n_new개를 응답당 per_req($)로 쳤을 때 상한을 넘으면 제출하지 않고 멈춘다
+    s, add = spent(), n_new * per_req
+    if s + add > COST_CAP:
+        raise SystemExit(f'예산 상한 ${COST_CAP:.0f} 초과 예상: 지금까지 ${s:.2f} + 이번 약 ${add:.2f} — 제출하지 않고 멈춤')
+
+def run_split(split, ids=None, per_gen=0.003, per_label=None):
     cases, cfg = CASES[split], SPLITS[split]
+    if ids is not None: cases = {c: cases[c] for c in ids}
+    per_label = per_label if per_label is not None else (0.012 if cfg['labeler'] == 'claude-opus-5-5' else 0.006)
+    _done = load_json(os.path.join(K2_DIR, f'gen_{split}.json')) or {}
+    guard(sum(c not in _done for c in cases), per_gen)
     gens = run_batch({c: gen_params(x) for c, x in cases.items()}, os.path.join(K2_DIR, f'gen_{split}.json'))
     valid = [c for c in cases if gen_status(gens.get(c)) == 'valid']
     print(f'{split} 생성: 유효 {len(valid)} | 거절 {sum(gen_status(gens.get(c)) == "refusal" for c in cases)} | '
           f'빈 응답 {sum(gen_status(gens.get(c)) == "empty" for c in cases)} | max_tokens {sum((gens.get(c) or {}).get("stop") == "max_tokens" for c in cases)}')
+    _done = load_json(os.path.join(K2_DIR, f'label_{split}.json')) or {}
+    guard(sum(c not in _done for c in valid), per_label)
     raw = run_batch({c: label_params_k2(cases[c], gens[c]['text'], cfg['labeler']) for c in valid}, os.path.join(K2_DIR, f'label_{split}.json'))
     labels, bad = {}, []
     for c in valid:
@@ -89,7 +117,7 @@ def run_split(split):
         except Exception as e: print(f'  {c}: {type(e).__name__}'); break
     print(f'{split} 정답({cfg["labeler"]}): {len(labels)}/{len(valid)} 확보')
     scores = {}
-    if cfg['score']:
+    if cfg['score'] and ids is None:
         sp = os.path.join(K2_DIR, f'scores_{split}.json')
         scores = load_json(sp) or {}
         refs, t0 = {}, time.time()
@@ -101,6 +129,19 @@ def run_split(split):
                 save_json(scores, sp); print(f'  판정 {len(scores)}/{len(valid)} ({time.time() - t0:.0f}s)', flush=True)
         save_json(scores, sp)
     return gens, labels, scores
+"""
+
+K2A_PILOT = r"""
+def pilot_projection(cases_all, gens, raw, labels, n_total):
+    # 파일럿 응답의 실제 사용량으로 묶음별 비용과 학습 H 문장 수를 내다본다
+    ids = [c for c in raw if c in gens]
+    g_cost = cost({c: gens[c] for c in gens}) / max(len(gens), 1)
+    l_cost = cost({c: raw[c] for c in ids}) / max(len(ids), 1)          # Sonnet 정답 응답당
+    h_per = sum(sum(v['label'] == 'H' for v in labs.values()) for labs in labels.values()) / max(len(labels), 1)
+    opus_ratio = 2.0                                                     # 배치 단가 Opus/Sonnet ($2/$10 vs $1/$5)
+    proj = {sp: n * (g_cost + l_cost * (opus_ratio if SPLITS[sp]['labeler'] == 'claude-opus-5-5' else 1.0)) for sp, n in n_total.items()}
+    return {'gen_per_resp': g_cost, 'sonnet_label_per_resp': l_cost, 'H_per_resp': h_per,
+            'proj_cost': proj, 'proj_total': sum(proj.values()), 'proj_train_H': h_per * n_total['train']}
 """
 
 K2A_CHECK = r"""
@@ -159,8 +200,8 @@ M1에서 배포 판정기는 최신 Claude 응답의 환각을 **14%**밖에 잡
 1. 왼쪽 열쇠 아이콘(보안 비밀)에 `ANTHROPIC_API_KEY`를 넣고 노트북 접근을 켠다
 2. 런타임 유형: **GPU**(L4·A100 권장, T4도 가능). calM·devM 판정 지점 점수를 낸다
 3. **모두 실행**. 배치 처리는 보통 1~2시간, 점수는 1~2시간. 끊기면 다시 모두 실행 — 제출한 배치·받은 결과·점수는 드라이브 `k2/`에서 이어서 한다
-4. 비용(추정, 실행 중 출력): 약 $40~45 (M1 실측 단가 기준)
-5. 끝나면 `k2a_results.zip`(원문 없음)이 내려받아진다 → 올려 주면 K2-0을 확인하고 K2b로 넘어간다
+4. 비용: 약 $40~45 (M1 실측 단가 기준 추정). **안전장치**: ① 시작 시 드라이브 쓰기 점검 ② 파일럿 150건으로 실제 단가를 재서 예상 총비용 > $50 또는 학습 환각이 부족하면 멈춤 ③ 묶음마다 제출 전에 누적 사용량 + 이번 묶음 예상이 $50을 넘으면 멈춤 ④ 제출한 배치 번호·받은 결과는 바로 드라이브에 저장돼 다시 실행해도 같은 요청을 두 번 내지 않음
+5. 끝나면 `k2a_results.zip`(원문 없음)과 `k2a_raw_backup.zip`(API 원자료 백업, 맥에 보관만)이 내려받아진다 → 올려 주면 K2-0을 확인하고 K2b로 넘어간다
 """)
 
 md("## 1. 환경 준비")
@@ -193,13 +234,30 @@ for g in GENS:
 est = {sp: len(c) * (0.00175 + (0.0075 if SPLITS[sp]['labeler'] == 'claude-opus-5-5' else 0.00375)) for sp, c in CASES.items()}
 print('예상 비용(M1 실측 단가):', {k: round(v, 1) for k, v in est.items()}, f'합계 약 ${sum(est.values()):.0f}')
 """)
-md("## 5. 생성 → 정답 → (calM·devM) 기존 조합 판정")
-code(K2A_RUN + r"""
-RUN = {}
-for sp in ['calM', 'devM', 'train']:          # 평가·보정 먼저 (학습 묶음이 가장 큼)
-    RUN[sp] = run_split(sp)
+md("""## 5. 파일럿 — 학습 묶음 150건으로 실제 비용·환각 수를 재고, 기준에 못 미치면 여기서 멈춤
+
+전체를 제출하기 전에 학습 묶음에서 150건(Random(2033))만 먼저 생성·정답을 받아 **응답당 실제 비용**과 **환각 문장 비율**을 잰다.
+예상 총비용이 상한($50)을 넘거나, 예상 학습 H 문장이 K2-0 기준(500)의 1.2배(600)에 못 미치면 **나머지를 제출하지 않고 멈춘다**(이때까지 약 $1).
+파일럿 결과는 버리지 않고 본 실행에 그대로 들어간다.""")
+code(K2A_RUN + K2A_PILOT + r"""
+PILOT = sorted(random.Random(2033).sample(sorted(CASES['train']), 150))
+pg, pl, _ = run_split('train', ids=PILOT, per_gen=0.01, per_label=0.01)
+_raw = load_json(os.path.join(K2_DIR, 'label_train.json'))
+PJ = pilot_projection(CASES, {c: load_json(os.path.join(K2_DIR, 'gen_train.json'))[c] for c in PILOT},
+                      {c: _raw[c] for c in PILOT if c in _raw}, pl, {sp: len(c) for sp, c in CASES.items()})
+print(json.dumps(PJ, ensure_ascii=False, indent=1, default=float))
+print(f"예상 총비용 ${PJ['proj_total']:.1f} (상한 ${COST_CAP:.0f}) | 예상 학습 H 문장 {PJ['proj_train_H']:.0f} (필요 ≥ 600)")
+if PJ['proj_total'] > COST_CAP or PJ['proj_train_H'] < 600:
+    raise SystemExit('파일럿 기준 미달 — 나머지는 제출하지 않음. 결과를 Claude Code에 알려 주세요')
+PER = {'gen': PJ['gen_per_resp'] * 1.3, 'sonnet': PJ['sonnet_label_per_resp'] * 1.3, 'opus': PJ['sonnet_label_per_resp'] * 2.0 * 1.3}
 """)
-md("## 6. K2-0 판정과 저장")
+md("## 6. 생성 → 정답 → (calM·devM) 기존 조합 판정")
+code(r"""
+RUN = {}
+for sp in ['calM', 'devM', 'train']:          # 평가·보정 먼저 (학습 묶음이 가장 큼). 묶음마다 제출 전에 예산 확인(파일럿 단가 × 1.3)
+    RUN[sp] = run_split(sp, per_gen=PER['gen'], per_label=PER['opus' if SPLITS[sp]['labeler'] == 'claude-opus-5-5' else 'sonnet'])
+""")
+md("## 7. K2-0 판정과 저장")
 code(M1.M1_METRICS + K2A_CHECK + r"""
 CHK, ROWS = k2a_check(CASES, RUN)
 print(json.dumps({k: v for k, v in CHK.items() if k != 'train_hal_by_gen_task'}, ensure_ascii=False, indent=1))
@@ -226,6 +284,11 @@ print('API 사용량(추정 $)', usage, f'합계 ${sum(usage.values()):.2f}')
 zp = shutil.make_archive('/content/k2a_results', 'zip', LOCAL)
 from google.colab import files
 files.download(zp)
+# 보험: API 원자료(생성·정답·요청) 백업 — 드라이브가 사라져도 돈을 다시 쓰지 않게 맥에 보관(원문 포함, 저장소에 커밋 금지)
+BK = '/content/k2a_raw'; os.makedirs(BK, exist_ok=True)
+for f in os.listdir(K2_DIR):
+    if f.startswith(('cases_', 'gen_', 'label_', 'scores_')) and f.endswith('.json'): shutil.copy(os.path.join(K2_DIR, f), BK)
+files.download(shutil.make_archive('/content/k2a_raw_backup', 'zip', BK))
 """)
 
 nb = {"cells": cells, "metadata": {"accelerator": "GPU", "colab": {"provenance": [], "gpuType": "L4"},

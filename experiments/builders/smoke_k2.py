@@ -46,6 +46,24 @@ for sp, n, he in [('train', 600, 1), ('calM', 500, 50), ('devM', 400, 2)]:
     CASES[sp], RUN[sp] = fake_split(sp, n, he)
 CHK, ROWS = G['k2a_check'](CASES, RUN)
 assert CHK['train_H_sent'] == 600 and CHK['calM_clean'] == 490 and CHK['devM_hal'] == 200 and CHK['K2_0'], CHK
+# 파일럿 예상치·예산 상한
+G['cost'] = lambda res: sum(r['c'] for r in res.values())
+exec(KA.K2A_PILOT, G)
+pg = {f'p{k}': {'c': 0.002} for k in range(10)}
+pr = {f'p{k}': {'c': 0.004} for k in range(10)}
+plab = {f'p{k}': {1: {'label': 'H' if k < 2 else 'S'}, 2: {'label': 'S'}} for k in range(10)}
+PJ = G['pilot_projection'](None, pg, pr, plab, {'train': 4000, 'calM': 1000, 'devM': 1000})
+assert abs(PJ['proj_cost']['train'] - 4000 * 0.006) < 1e-9 and abs(PJ['proj_cost']['calM'] - 1000 * 0.010) < 1e-9, PJ
+assert abs(PJ['proj_train_H'] - 800) < 1e-9 and abs(PJ['proj_total'] - 44) < 1e-9, PJ
+tmpd = tempfile.mkdtemp(); G['K2_DIR'] = tmpd
+G['load_json'] = lambda p: json.load(open(p)) if os.path.exists(p) else None
+exec(KA.K2A_RUN.split('def run_split')[0], G)
+json.dump({'a': {'c': 30.0}}, open(os.path.join(tmpd, 'gen_train.json'), 'w'))
+G['guard'](1000, 0.01)                                   # 30 + 10 ≤ 50
+try:
+    G['guard'](3000, 0.01); raise AssertionError('상한 초과인데 멈추지 않음')
+except SystemExit as e:
+    print('    예산 상한 작동:', str(e)[:60])
 print('[2] K2a 요청 복제·정답 요청·K2-0 집계 통과', {k: CHK[k] for k in ['train_H_sent', 'calM_clean', 'devM_hal', 'K2_0']})
 
 # 3) K2b 학습 지점 추가 — F1 LABELS 셀 그대로 (smoke_k1과 같은 가짜 학습 응답)
