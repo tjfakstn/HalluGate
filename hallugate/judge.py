@@ -12,7 +12,8 @@ import threading
 import time
 from dataclasses import dataclass
 
-import torch
+# torch·transformers·sentence-transformers는 StudentJudge 안에서만 import한다.
+# LexicalJudge·mock·`serve.py --lexical` 경로가 torch 없이 돌게 하기 위해서다 (pip install -e .[judge]로 설치).
 
 
 @dataclass
@@ -56,6 +57,7 @@ class StudentJudge:
     def __init__(self, model_dir, embedder='sentence-transformers/all-MiniLM-L6-v2', k=8, max_len=512,
                  chunk_words=40, threshold=0.0, device='', mode='retrieval', thresholds=None, threshold_key='svc10_orig',
                  default_stride=0):
+        import torch
         from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.mode = mode
@@ -98,15 +100,16 @@ class StudentJudge:
     def _pair(self, ref, text, prior):
         if self.mode == 'full':
             return ref.text, (prior or '') + text
+        import torch
         e = self._embed([text])[0]
         top = torch.topk(ref.emb @ e, min(self.k, ref.emb.shape[0])).indices.tolist()
         return ' ... '.join(ref.chunks[i] for i in sorted(top)), text
 
-    @torch.no_grad()
     def judge(self, ref, text, prior='', threshold=None):
         """text: 판정할 문장(또는 문장 앞부분, 앞뒤 공백 제거), prior: 응답에서 그 문장 앞까지의 원문."""
+        import torch
         t0 = time.perf_counter()
-        with self._lock:
+        with self._lock, torch.no_grad():
             a, b = self._pair(ref, text, prior)
             enc = self.tok([a], [b], truncation='only_first', max_length=self.max_len,
                            return_tensors='pt').to(self.device)
