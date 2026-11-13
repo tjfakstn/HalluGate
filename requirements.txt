@@ -1,11 +1,2 @@
-fastapi
-uvicorn
-httpx
-pysbd
-tiktoken
-torch
-transformers
-sentence-transformers
-openai
-pytest
-pytest-asyncio
+# 의존성의 정본은 pyproject.toml이다. 이 파일은 판정기·테스트까지 한 번에 설치하는 단축 경로다.
+-e .[judge,dev]

@@ -1,0 +1,43 @@
+# 의존성의 정본(正本)은 이 파일이다. requirements.txt는 이 파일을 가리키기만 한다.
+# 하한(>=)은 2026-11-13에 테스트를 실제로 통과한 버전이다(Python 3.13 경량 venv, Python 3.14 판정기 venv).
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hallugate"
+version = "0.1.0"
+description = "RAG 응답을 스트리밍 중에 문장 단위로 근거 문서와 대조하는 OpenAI 호환 게이트웨이"
+readme = "README.md"
+requires-python = ">=3.13"   # 테스트한 버전: 3.13, 3.14
+# 기본 = 게이트웨이 경량 실행(대체 판정기, 가짜 LLM). torch 없이 설치된다.
+dependencies = [
+    "fastapi>=0.162.3",
+    "uvicorn>=0.54.0",
+    "httpx>=0.28.1",
+    "pysbd>=0.3.4",
+    "tiktoken>=0.14.0",
+    "openai>=3.49.0",
+    "numpy>=2.5.4",          # hallugate/store.py (컬렉션 저장소)
+]
+
+[project.optional-dependencies]
+# 학습 판정기(StudentJudge) 실행: pip install -e .[judge]
+judge = [
+    "torch>=2.15.0",
+    # 상한 <6: judge.py는 transformers 로딩 동작에 맞춰 두 가지를 직접 처리한다.
+    #  - fp16으로 저장된 가중치를 fp32로 올려 노트북 점수와 맞춘다 (SSOT §7 10/21, ca8218b)
+    #  - ModernBERT의 reference_compile을 모델 인자가 아니라 설정에 넣는다 (새 버전에서 인자 제거)
+    # 메이저 버전이 바뀌면 이런 로딩 동작이 또 바뀔 수 있으므로, 올릴 때는 실제 가중치로
+    # JUDGE_PARITY_DIR 일치 테스트(SPEC A11)를 다시 통과시킨 뒤 상한을 옮긴다.
+    "transformers>=5.22.2,<6",
+    "sentence-transformers>=6.2.0",
+]
+# 테스트: pip install -e .[dev]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1",
+]
+
+[tool.setuptools]
+packages = ["hallugate"]
