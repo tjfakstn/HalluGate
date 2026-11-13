@@ -1,0 +1,118 @@
+{
+ "n_all": 750,
+ "n_primary": 661,
+ "n_hal": 424,
+ "n_clean": 237,
+ "n_overlap": 20,
+ "n_questionable_worst": 72,
+ "auroc": {
+  "max_c": 0.6288512061141629,
+  "max_f": 0.595663163760847,
+  "max_i": 0.614252448053499,
+  "max_n": 0.6177105724066555,
+  "hhem21": 0.6117347344956611,
+  "hhem21_en": 0.6366183026829073
+ },
+ "auroc_ci": {
+  "max_c": [
+   0.5587715426087058,
+   0.6908729608802563
+  ],
+  "max_f": [
+   0.5259893796009542,
+   0.6596455440283024
+  ],
+  "max_i": [
+   0.5484799446414973,
+   0.6772971776995802
+  ],
+  "max_n": [
+   0.5469508355008909,
+   0.6784467674250985
+  ],
+  "hhem21": [
+   0.5440243388665564,
+   0.677667182393839
+  ],
+  "hhem21_en": [
+   0.5731540025509392,
+   0.6968853687347525
+  ]
+ },
+ "auroc_diff_c_vs_hhem21": {
+  "delta": 0.017116471618501827,
+  "ci": [
+   -0.058071304865852255,
+   0.08063722680525952
+  ]
+ },
+ "auroc_diff_n_vs_c": {
+  "delta": -0.011140633707507397,
+  "ci": [
+   -0.03343308177351641,
+   0.012048225391425213
+  ]
+ },
+ "bacc": {
+  "flag_c": 0.5304762757742217,
+  "flag_n": 0.5408406973967042,
+  "pred_gpt-3.5-turbo": 0.4655929066157153,
+  "pred_gpt-4-turbo": 0.5645002388344876,
+  "pred_gpt_4o": 0.5605843483799061,
+  "pred_trueteacher": 0.5335263912108908,
+  "flag_cB": 0.5441943316614919,
+  "flag_nB": 0.5739988854390574
+ },
+ "flag_c_hal_rate": 0.07783018867924528,
+ "flag_c_clean_rate": 0.016877637130801686,
+ "flag_n_hal_rate": 0.09433962264150944,
+ "flag_n_clean_rate": 0.012658227848101266,
+ "strict_c_rate": 0.07783018867924528,
+ "strict_n_rate": 0.09198113207547169,
+ "by_summarizer_auroc_c": {
+  "Anthropic/claude-3-5-sonnet-20240620": 0.6072916666666667,
+  "Qwen/Qwen2.5-7B-Instruct": 0.5042735042735043,
+  "cohere/command-r-08-2024": 0.6098901098901099,
+  "google/gemini-1.5-flash-001": 0.6472148541114059,
+  "meta-llama/Meta-Llama-3.1-70B-Instruct": 0.6411149825783973,
+  "meta-llama/Meta-Llama-3.1-8B-Instruct": 0.5674470457079153,
+  "microsoft/Phi-3-mini-4k-instruct": 0.71,
+  "mistralai/Mistral-7B-Instruct-v0.3": 0.6836734693877551,
+  "openai/GPT-3.5-Turbo": 0.5321691176470588,
+  "openai/gpt-4o": 0.6515151515151515
+ },
+ "by_summarizer_n_hal": {
+  "Anthropic/claude-3-5-sonnet-20240620": 40,
+  "Qwen/Qwen2.5-7B-Instruct": 52,
+  "cohere/command-r-08-2024": 52,
+  "google/gemini-1.5-flash-001": 39,
+  "meta-llama/Meta-Llama-3.1-70B-Instruct": 41,
+  "meta-llama/Meta-Llama-3.1-8B-Instruct": 39,
+  "microsoft/Phi-3-mini-4k-instruct": 50,
+  "mistralai/Mistral-7B-Instruct-v0.3": 49,
+  "openai/GPT-3.5-Turbo": 32,
+  "openai/gpt-4o": 30
+ },
+ "auroc_q_as_hal": {
+  "max_c": 0.6118400219101172,
+  "max_f": 0.5800232794994907,
+  "max_i": 0.6052370315214692,
+  "max_n": 0.6030631370837292,
+  "hhem21": 0.5987667000453608,
+  "hhem21_en": 0.629637712789175
+ },
+ "flag_cB_hal_rate": 0.1179245283018868,
+ "flag_cB_clean_rate": 0.029535864978902954,
+ "flag_nB_hal_rate": 0.2830188679245283,
+ "flag_nB_clean_rate": 0.1350210970464135,
+ "verdict_vs_hhem21": "비슷",
+ "discriminates": true,
+ "has_k2": true,
+ "thr": {
+  "c": 2.991638706756592,
+  "n": 2.787699268890381,
+  "nB": 1.8434106833639325,
+  "cB": 2.7385038673533924
+ },
+ "gpu": "NVIDIA L4"
+}

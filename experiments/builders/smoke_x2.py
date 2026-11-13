@@ -20,7 +20,7 @@ for c in X.cells:
 print(f'[1] x2: 코드 셀 {n}개 문법 통과')
 
 fbdir = sys.argv[1]
-G = {'np': np, 'pd': pd, 'json': json, 'os': os, 'random': random}
+G = {'np': np, 'json': json, 'os': os, 'random': random}   # pd는 일부러 안 넣음 — 셀이 직접 import하는지 확인
 exec(L3.L3_INPUTS + X.X2_DATA.replace("glob.glob('FaithBench/", f"glob.glob('{fbdir}/") + X.X2_METRICS, G)
 FB = G['FB']; assert len(FB) == 750
 labs = [G['fb_label'](s) for s in FB]

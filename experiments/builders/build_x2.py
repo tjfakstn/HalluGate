@@ -58,6 +58,7 @@ def overlap_flags(fb_sources, rt_sources, thr=0.5):
 """
 
 X2_METRICS = r"""
+import numpy as np, pandas as pd
 from sklearn.metrics import roc_auc_score
 
 def auroc(y, s):
