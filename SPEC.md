@@ -127,6 +127,7 @@ cut 발생 시 종료 청크에 `{"cut": true, "sentence_idx": n}`이 함께 실
 - 임베더: `COLLECTION_EMBEDDER`, 비우면 판정기(retrieval 방식)의 임베더를 같이 쓰고 없으면 all-MiniLM-L6-v2.
 - 접근 토큰: `ADMIN_TOKEN`을 정하면 문서 API는 `Authorization: Bearer <ADMIN_TOKEN>`이 있어야 한다(401). 비우면 토큰 없이 열린다(로컬 개발용, `/health`의 `collections_auth`로 확인). 채팅 요청의 컬렉션 사용에는 토큰이 필요 없다.
 - `COLLECTION_DB`를 빈 값으로 두면 컬렉션 기능이 꺼지고 관련 요청은 503.
+- 경량 설치(`pip install -e .`, torch·sentence-transformers 없음): `COLLECTION_EMBEDDER`를 비웠고 판정기에도 임베더가 없는데(대체 판정기) `sentence-transformers`를 import할 수 없으면, 컬렉션 기능을 끄고 시작한다(경고 로그 1회, 관련 요청 503, `/health`의 `collections: false`). `COLLECTION_EMBEDDER`를 지정했는데 import할 수 없으면 시작 오류.
 
 ### 2.6 프롬프트 삽입 ✅
 - `verification.collection`이 있고 요청에 근거가 없으면, **마지막 사용자 메시지**로 컬렉션을 검색해 조각 `COLLECTION_TOP_K`(4)개를 고른다. 없는 컬렉션 → 404.

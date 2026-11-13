@@ -584,6 +584,29 @@ async def test_collections_disabled(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_collections_off_without_sentence_transformers(tmp_path, monkeypatch):
+    # 경량 설치: 임베더 미지정 + 대체 판정기 + sentence-transformers 없음 → 컬렉션만 끄고 시작 (SPEC §2.5)
+    monkeypatch.setitem(sys.modules, 'sentence_transformers', None)     # import 실패를 흉내
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path='', stride_tokenizer='words',
+                 collection_db=str(tmp_path / 'c.sqlite3'))
+    app = create_app(s, judge=LexicalJudge(), http_client=up)
+    async with app.router.lifespan_context(app):
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://gw')
+        assert (await client.get('/health')).json()['collections'] is False
+        assert (await client.get('/v1/collections')).status_code == 503
+        text, _, _ = await run(client, body(GOOD, 'hold'))
+        assert text == GOOD                                               # 채팅 검증은 그대로
+    # 임베더를 지정했는데 import할 수 없으면 시작 오류
+    s2 = Settings(upstream_base_url='http://mock/v1', metrics_path='', stride_tokenizer='words',
+                  collection_db=str(tmp_path / 'c2.sqlite3'), collection_embedder='some/embedder')
+    app2 = create_app(s2, judge=LexicalJudge(), http_client=up)
+    with pytest.raises(ImportError):
+        async with app2.router.lifespan_context(app2):
+            pass
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('mode', ['pass', 'hold'])
 async def test_rag_same_evidence_for_llm_and_judge(tmp_path, mode):
     # A9: LLM 프롬프트에 넣은 근거 = 판정 근거, 본문 보존, 사용한 근거를 본문보다 먼저 알림

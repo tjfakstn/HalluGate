@@ -12,6 +12,7 @@ choices가 비어 있으므로 일반 클라이언트는 본문에 영향 없이
 """
 import asyncio
 import json
+import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -25,6 +26,8 @@ from .config import Settings
 from .pipeline import RequestRecord, VerifyPipeline, is_english
 from .splitter import IncrementalSplitter
 from .tokens import make_tokens
+
+log = logging.getLogger('hallugate')
 
 
 def _sse(obj):
@@ -97,10 +100,19 @@ def create_app(settings=None, judge=None, http_client=None, store=None):
             from .store import SQLiteStore
             emb = None if settings.collection_embedder else getattr(state['judge'], 'embedder', None)
             if emb is None or not hasattr(emb, 'encode'):
-                from sentence_transformers import SentenceTransformer
-                emb = SentenceTransformer(settings.collection_embedder or 'sentence-transformers/all-MiniLM-L6-v2')
-            state['store'] = SQLiteStore(settings.collection_db, emb, settings.collection_chunk_words,
-                                         settings.collection_overlap)
+                try:
+                    from sentence_transformers import SentenceTransformer
+                except ImportError:
+                    if settings.collection_embedder:          # 지정한 임베더를 못 쓰면 시작 오류
+                        raise
+                    # 경량 설치(torch 없음) + 대체 판정기: 컬렉션 기능만 끄고 시작한다 (SPEC §2.5)
+                    log.warning('sentence-transformers가 없어 컬렉션 기능을 끕니다 (pip install -e .[judge]로 설치)')
+                    emb = None
+                else:
+                    emb = SentenceTransformer(settings.collection_embedder or 'sentence-transformers/all-MiniLM-L6-v2')
+            if emb is not None:
+                state['store'] = SQLiteStore(settings.collection_db, emb, settings.collection_chunk_words,
+                                             settings.collection_overlap)
         own_client = state['client'] is None
         if own_client:
             state['client'] = httpx.AsyncClient(timeout=settings.upstream_timeout)
@@ -134,7 +146,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None):
     def _admin(request):
         """문서 API 접근 확인. 문제가 있으면 오류 응답, 통과면 None."""
         if state['store'] is None:
-            return _err('collections are disabled (COLLECTION_DB is empty)', 503, 'unavailable')
+            return _err('collections are disabled (COLLECTION_DB is empty or sentence-transformers is not installed)', 503, 'unavailable')
         if settings.admin_token and request.headers.get('authorization') != f'Bearer {settings.admin_token}':
             return _err('invalid or missing admin token', 401, 'authentication_error')
         return None
@@ -188,7 +200,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None):
         if coll:
             store = state['store']
             if store is None:
-                return _err('collections are disabled (COLLECTION_DB is empty)', 503, 'unavailable')
+                return _err('collections are disabled (COLLECTION_DB is empty or sentence-transformers is not installed)', 503, 'unavailable')
             if not await asyncio.to_thread(store.exists, coll):
                 return _err(f'collection {coll} not found', 404, 'not_found_error')
             evidence = await asyncio.to_thread(store.search, coll, ctxmod.last_user_text(body), settings.collection_top_k)
