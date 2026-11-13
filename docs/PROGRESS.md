@@ -210,6 +210,12 @@
 - 새 F1은 최신 LLM 응답 점수를 전반적으로 낮췄다(단독 표시율 7.6% → 0.3%). 문체를 배운 것으로 본다.
 - **임계값 B 채택 규칙 충족**: 기존 조합의 devM 표시율이 6.6%라서 서비스 임계값을 2.7385로 바꾼다. 결과 `docs/analysis/k2/k2b/`
 
+## 11/13 — 개발 환경 정리 (브랜치 `chore/dev-env`)
+
+- torch 없이 설치·테스트되는 경량 경로: `judge.py`의 torch import를 `StudentJudge` 안으로 옮김(실제 가중치 3종 점수 변경 전과 동일), sentence-transformers가 없으면 컬렉션 기능만 끄고 시작(SPEC §2.5)
+- 모델 필요 테스트 3개에 `@pytest.mark.model`, 기본 실행은 경량. 측정: torch 없음 경량 38개 통과, torch 있음 전체 40개 통과 + 가중치 일치 1개(지정 시)
+- `pyproject.toml`(기본·`judge`·`dev`) 정본화, `requirements.txt`는 `-e .[judge,dev]`, CI(경량, Python 3.13·3.14), `.DS_Store` 추적 해제, README 첫 화면 정리
+
 ## 현재 위치 (2026-11-13 기준)
 
 **완료**

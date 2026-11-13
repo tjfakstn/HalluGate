@@ -18,8 +18,10 @@ RAG 응답을 스트리밍 중에 문장 단위로 근거 문서와 대조하는
 ## 명령어
 
 ```bash
-pip install -r requirements.txt
-python -m pytest -q                                        # 전체 테스트 (네트워크·모델 다운로드 없음, 약 10초)
+pip install -e ".[dev]"                                    # 경량 설치 (torch 없음). 정본은 pyproject.toml
+python -m pytest -q                                        # 경량 테스트 38개 (네트워크·모델 다운로드 없음, 약 10초)
+pip install -e ".[judge,dev]"                              # 학습 판정기까지 (= pip install -r requirements.txt)
+python -m pytest -q -m "model or not model"                # 전체 40개 (+ JUDGE_PARITY_DIR 지정 시 가중치 일치 1개)
 python mock_upstream.py --port 9000 &                      # 가짜 LLM
 UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --lexical --port 8000   # 게이트웨이 (대체 판정기)
 python scripts/make_replay_set.py --ragtruth RAGTruth/dataset --per-task 20
@@ -65,7 +67,8 @@ python experiments/builders/build_s3.py                    # 노트북 재생성
 5. 테스트는 네트워크와 모델 다운로드 없이 돌아야 한다. 가짜 LLM(`mock_upstream`), `LexicalJudge`, 작은 임의 모델을 쓴다.
    시간 간격이 중요한 테스트는 `httpx.ASGITransport`가 아니라 실제 uvicorn 서버(`live` 픽스처)로 한다.
    ASGITransport는 응답을 한 번에 모아서 전달하기 때문이다.
-6. 의존성을 추가하면 `requirements.txt`를 갱신한다.
+6. 의존성을 추가하면 `pyproject.toml`(정본)을 갱신한다. 게이트웨이 경량 실행에 필요하면 기본 의존성, 학습 판정기에만 필요하면 `judge`에 넣는다.
+7. torch·transformers·sentence-transformers는 모듈 최상단에서 import하지 않는다(경량 설치에서 깨짐). 이것이 필요한 테스트에는 `@pytest.mark.model`을 붙인다.
 
 ### C. 실험 노트북
 
