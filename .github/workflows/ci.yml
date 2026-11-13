@@ -1,0 +1,30 @@
+# 경량 테스트만 돈다: pip install -e .[dev] (torch·transformers 없음) → pytest 기본 실행(-m "not model").
+# 모델 테스트(@pytest.mark.model)는 CI에서 돌리지 않는다. torch·transformers 설치가 무겁고,
+# 실제 판정기 일치 테스트(test_parity_fixture)는 저장소에 없는 가중치(JUDGE_PARITY_DIR)가 필요하며,
+# 판정기 지연 측정은 GPU가 필요하기 때문이다. 모델 테스트는 판정기를 바꿀 때 로컬에서
+#   pip install -e .[judge,dev] && python -m pytest -q -m "model or not model"
+# 로 돌린다.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: 설치 (경량, torch 없음)
+        run: pip install -e ".[dev]"
+      - name: torch가 설치되지 않았는지 확인
+        run: python -c "import importlib.util, sys; sys.exit(importlib.util.find_spec('torch') is not None)"
+      - name: 경량 테스트
+        run: python -m pytest -q
