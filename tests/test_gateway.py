@@ -246,6 +246,7 @@ async def test_openai_sdk_compatible(gw):
 
 
 # ---------------- 학습된 판정기 로딩 경로 (작은 임의 모델) ----------------
+@pytest.mark.model
 def test_student_judge_loads(tmp_path):
     import torch
     from transformers import BertConfig, BertForSequenceClassification, BertTokenizerFast
@@ -348,6 +349,7 @@ def _tiny_bert(path, words):
                                   ).save_pretrained(path)
 
 
+@pytest.mark.model
 def test_load_judge_reads_config_full_mode(tmp_path):
     # I2 노트북 형식(input.retrieval = null) → 근거 전체 + 응답 앞부분 입력, 간격별 임계값, 기본 간격 8
     from hallugate.judge import load_judge
@@ -479,6 +481,7 @@ async def test_non_english_unverified(gw):
 
 
 # 실제 배포 가중치로 고정 예제 점수 일치(A11). 가중치는 저장소에 없으므로 JUDGE_PARITY_DIR을 지정했을 때만 실행
+@pytest.mark.model
 @pytest.mark.skipif(not os.environ.get('JUDGE_PARITY_DIR'), reason='JUDGE_PARITY_DIR 미지정 (가중치 필요)')
 def test_parity_fixture():
     from hallugate.judge import load_judge
