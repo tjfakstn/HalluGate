@@ -39,10 +39,11 @@ print(f'[2] 나누기: J-cal {len(cal)} (근거 {cal.src.nunique()}), J-test {le
 G['PRICE'] = {'claude-haiku-5-5': (0.05, 0.25), 'claude-sonnet-5-5': (1.0, 5.0), 'claude-opus-5-5': (2.0, 10.0)}
 exec(M1.M1_LABEL + M1.M1_SCORE + M1.M1_METRICS + J.J1_VERIFY + J.J1_METRICS, G)
 REQ = G['fb_requests'](P, FB)
-assert set(REQ) == {'haiku', 'sonnet'} and len(REQ['haiku']) == len(P)
+assert set(REQ) == {'haiku', 'sonnet', 'opus'} and len(REQ['haiku']) == len(P)
 r0 = REQ['sonnet'][f'sonnet-{P.i.iloc[0]}']
 assert r0['model'] == 'claude-sonnet-5-5' and 'Summary — summarize' in r0['messages'][0]['content'] and r0['system'] == G['SYSTEM']
-est = G['est_cost'](REQ['haiku']) + G['est_cost'](REQ['sonnet'])
+est = sum(G['est_cost'](r) for r in REQ.values())
+print(f'    FaithBench 예상 비용 ${est:.2f} (후보별 ' + ', '.join(f"{m} ${G['est_cost'](r):.2f}" for m, r in REQ.items()) + ')')
 assert 0 < est < G['BUDGET_USD'], est
 
 def fake(i, mode):
@@ -53,7 +54,8 @@ def fake(i, mode):
         lab = ['H'] * k
     return {'text': json.dumps({'sentences': [{'i': j + 1, 'label': l} for j, l in enumerate(lab)]}), 'stop': 'end_turn',
             'model': 'x', 'in': 1000, 'out': 100}
-RES = {'haiku': {f'haiku-{i}': fake(i, 'truth') for i in P.i}, 'sonnet': {f'sonnet-{i}': fake(i, 'allH') for i in P.i}}
+RES = {'haiku': {f'haiku-{i}': fake(i, 'truth') for i in P.i}, 'sonnet': {f'sonnet-{i}': fake(i, 'allH') for i in P.i},
+       'opus': {f'opus-{i}': fake(i, 'allH') for i in P.i}}
 bad = int(P[P.hal & (P.part == 'test')].i.iloc[0]); RES['haiku'][f'haiku-{bad}']['text'] = 'not json'     # 파싱 실패 1건
 P = G['claude_cols'](P, FB, RES)
 row = P[P.i == bad].iloc[0]
@@ -63,7 +65,7 @@ _cal = P[P.part == 'cal'].copy(); _cal['s'] = [max(1 - p for p in MC[str(i)]['p'
 thr = G['conformal'](_cal[~_cal.hal].s.values, 0.10)
 P = G['minicheck_cols'](P, MC, thr)
 
-CANDS = ['haiku', 'minicheck', 'sonnet']
+CANDS = ['haiku', 'minicheck', 'sonnet', 'opus']
 tau = G['gate_threshold'](P)
 assert abs((P[(P.part == 'cal') & P.hal].max_c >= tau).mean() - 0.95) < 0.01
 P['gate'] = P.max_c >= tau

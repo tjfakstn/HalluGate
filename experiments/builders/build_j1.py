@@ -18,9 +18,10 @@ assert 'def run_batch(' in J1_API and "'claude-sonnet-5-5'" in J1_API
 # ---- 아래 J1_* 문자열은 smoke_j1.py가 실제 FaithBench·가짜 API 결과로 그대로 실행해 확인한다 ----
 J1_SPLIT = r"""
 import pandas as pd
-CANDS_CLAUDE = {'haiku': 'claude-haiku-5-5', 'sonnet': 'claude-sonnet-5-5'}
-ORDER = ['haiku', 'minicheck', 'sonnet']          # 동점이면 싼 쪽 (사전 고정)
-BUDGET_USD = 25.0                                  # 이 노트북 전체 API 상한 (사전 고정)
+CANDS_CLAUDE = {'haiku': 'claude-haiku-5-5', 'sonnet': 'claude-sonnet-5-5', 'opus': 'claude-opus-5-5'}
+ORDER = ['haiku', 'minicheck', 'sonnet', 'opus']
+DM_CANDS = {m: v for m, v in CANDS_CLAUDE.items() if m != 'opus'}   # devM 정답이 Opus라 opus는 devM 보고에서 뺌(자기 채점, 비용 최대)          # 동점이면 싼 쪽 (사전 고정)
+BUDGET_USD = 30.0                                  # 이 노트북 전체 API 상한 (사전 고정)
 
 def j1_split(X2R, seed=2035):
     # 주 분석 행(X2와 같은 정의)만. 근거 단위로 섞어 앞 절반 = J-cal, 나머지 = J-test
@@ -128,22 +129,22 @@ K1·K2에서 경량 판정기를 다시 학습해도 최신 LLM 탐지율은 +0.
 
 ## 무엇을 하나 (학습 없음)
 
-- **후보(2단)**: `claude-haiku-5-5`, `claude-sonnet-5-5`(R4·M1과 같은 문장 단위 지시문, 문장마다 S/H/A, **H 문장이 하나라도 있으면 표시**),
+- **후보(2단)**: `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`(R4·M1과 같은 문장 단위 지시문, 문장마다 S/H/A, **H 문장이 하나라도 있으면 표시**),
   `Bespoke-MiniCheck-7B`(공개, 문장마다 근거 지지 확률, 응답 점수 = 최대 (1 − 확률), 임계값 = J-cal 멀쩡한 응답 등각 10%)
 - **데이터**: FaithBench 주 분석 661개(X2와 같은 정답·제외 규칙). 근거를 `random.Random(2035)`로 섞어 절반은 **J-cal**(후보 선택·보정), 절반은 **J-test**(판정)
 - **1단 거르기(보고·J1-3)**: 배포 조합 점수가 J-cal 환각 응답의 95%를 통과시키는 기준 이상인 응답만 2단으로 보낸다
-- **devM**(K2a의 최신 Claude 응답, Opus 정답): 정답과 같은 지시문이라 Claude 후보에게 순환이 생겨 **보고만**
+- **devM**(K2a의 최신 Claude 응답, Opus 정답): 정답과 같은 지시문이라 Claude 후보에게 순환이 생겨 **보고만**. opus는 정답 모델 자신이라 devM에서는 돌리지 않는다
 
 ## 사전 정의 기준 (SSOT §6 J1, 실행 전 고정)
 
 - **J1-0(유효성)**: Claude 후보마다 J-cal·J-test 응답의 JSON 파싱 성공 ≥ 95%. 미달 후보는 뺀다. MiniCheck가 설치·실행되지 않으면 후보에서 빠진다
-- **선택(J-cal)**: 멀쩡한 응답 표시율 ≤ 15%인 후보 중 환각 탐지율 최대(동점이면 haiku → minicheck → sonnet). 없으면 J1 미달
+- **선택(J-cal)**: 멀쩡한 응답 표시율 ≤ 15%인 후보 중 환각 탐지율 최대(동점이면 haiku → minicheck → sonnet → opus). 없으면 J1 미달
 - **J1-1(주, J-test)**: 선택 후보의 환각 응답 탐지율 ≥ 0.50, **그리고** 서비스 임계값 B 배포 조합 대비 탐지율 차이의 근거 단위 군집 부트스트랩 95% 하한 > 0 (2,000회, 시드 2035)
 - **J1-2(J-test)**: 선택 후보의 멀쩡한 응답 표시율 ≤ 15%
 - **J1 채택 = J1-1 그리고 J1-2** → 게이트웨이에 2단 검증을 넣는다(SPEC부터). 미달이면 "FaithBench급 환각은 현재 검증기로 절반을 못 잡는다"로 기록하고 서비스 주장을 줄인다
 - **J1-3(구조)**: 1단 거르기 + 2단의 J-test 탐지율 ≥ 2단 단독 − 0.03이면 거르기를 쓰고, 아니면 모든 응답을 2단으로 보낸다
 - **J1-4(지연)**: 선택 후보의 응답 1개 검증 p95 ≤ 5초(J-cal 40개, 실시간 요청)면 "응답을 잡아 두고 검증(hold)" 가능, 넘으면 응답 뒤 경고(비동기)로만 쓴다
-- 보고만: 모든 후보의 J-cal·J-test 수치, H 또는 A 기준, 생성 모델별, devM, 비용. **API 비용 상한 $25**(제출 전 추정이 넘으면 멈춤)
+- 보고만: 모든 후보의 J-cal·J-test 수치, H 또는 A 기준, 생성 모델별, devM, 비용. **API 비용 상한 $30**(제출 전 추정이 넘으면 멈춤)
 
 > 런타임: **GPU**(MiniCheck-7B용, L4·A100 권장). 먼저 X2를 돌려 드라이브 `x2/x2_rows.csv`가 있어야 한다. Colab 비밀 값 `ANTHROPIC_API_KEY` 필요.
 > 끊기면 다시 모두 실행(배치·점수는 드라이브 `j1/`에서 이어서). 끝나면 `j1_results.zip`(원문 없음)이 내려받아진다.
@@ -186,9 +187,9 @@ HAS_DM = all(os.path.exists(f) for f in dm_files)
 if HAS_DM:
     CM, GM, LM = (load_json(f) for f in dm_files)
     DM_VALID = [c for c in CM if gen_status(GM.get(c)) == 'valid' and c in LM]
-    REQ_DM = {m: {f'{m}-{c}': v_params(CM[c], GM[c]['text'], model) for c in DM_VALID} for m, model in CANDS_CLAUDE.items()}
+    REQ_DM = {m: {f'{m}-{c}': v_params(CM[c], GM[c]['text'], model) for c in DM_VALID} for m, model in DM_CANDS.items()}
 else:
-    REQ_DM = {m: {} for m in CANDS_CLAUDE}
+    REQ_DM = {m: {} for m in DM_CANDS}
 EST = sum(est_cost(r) for r in REQ.values()) + sum(est_cost(r) for r in REQ_DM.values())
 print(f'요청: FaithBench {sum(map(len, REQ.values()))}, devM {sum(map(len, REQ_DM.values()))} | 예상 비용 ${EST:.2f} (상한 ${BUDGET_USD})')
 assert EST <= BUDGET_USD, '예상 비용이 상한을 넘음 — 멈춤'
@@ -284,7 +285,7 @@ if HAS_DM:
         labs, ok = parse(LM[c]['text'], len(sentences(GM[c]['text'])))
         if ok: gold[c] = 'H' in [v['label'] for v in labs.values()]
     DM = {'n': len(gold), 'n_hal': sum(gold.values())}
-    for m, model in CANDS_CLAUDE.items():
+    for m in DM_CANDS:
         res = run_batch(REQ_DM[m], os.path.join(J1_DIR, f'v_{m}_devM.json'))
         fl = {}
         for c in gold:
