@@ -1,0 +1,40 @@
+{
+ "n_test": 336,
+ "n_test_hal": 216,
+ "n_test_clean": 120,
+ "selected": null,
+ "cB": {
+  "det": 0.125,
+  "flag": 0.058333333333333334
+ },
+ "J1_1": false,
+ "J1_2": false,
+ "J1": false,
+ "cands": [
+  "haiku",
+  "sonnet",
+  "opus"
+ ],
+ "tau1": 0.0943136949230823,
+ "thr_minicheck": null,
+ "devM": {
+  "n": 1072,
+  "n_hal": 191,
+  "haiku": {
+   "det": 0.35602094240837695,
+   "flag": 0.06696935300794551
+  },
+  "sonnet": {
+   "det": 0.41361256544502617,
+   "flag": 0.03178206583427923
+  }
+ },
+ "cost_usd": {
+  "v_haiku_fb.json": 0.11,
+  "v_sonnet_fb.json": 1.46,
+  "v_opus_fb.json": 3.56,
+  "v_haiku_devM.json": 0.25,
+  "v_sonnet_devM.json": 3.32
+ },
+ "gpu": "NVIDIA L4"
+}
