@@ -73,6 +73,9 @@ def extract(body, default_mode='pass', default_action='flag', default_stride=0, 
     coll = opts.get('collection')
     if coll is not None and (not isinstance(coll, str) or not coll):
         raise ValueError('verification.collection must be a non-empty string')
+    pc = opts.get('post_check')
+    if pc is not None and not isinstance(pc, bool):
+        raise ValueError('verification.post_check must be a boolean')
     if not ref and not coll:
         mode = 'off'
     out = (body, ref, mode, action) + ((stride,) if with_stride else ()) + ((opts,) if with_opts else ())

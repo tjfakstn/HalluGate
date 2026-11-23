@@ -53,5 +53,13 @@ class Settings:
     # 문서 등록 API 접근 토큰 (Authorization: Bearer). 비우면 토큰 없이 열린다(로컬 개발용)
     admin_token: str = field(default_factory=lambda: _env('ADMIN_TOKEN', ''))
 
+    # 응답 끝 2단 검증 (SPEC §5.3, 🧪 실험 기능). 기본 꺼짐. 검증기·임계값은 J2 결과로 바꿀 임시값
+    post_check_default: bool = field(default_factory=lambda: _env('POST_CHECK', False, lambda v: v.lower() in ('1', 'true', 'yes', 'on')))
+    post_check_model: str = field(default_factory=lambda: _env('POST_CHECK_MODEL', 'claude-sonnet-5-5'))
+    post_check_votes: int = field(default_factory=lambda: _env('POST_CHECK_VOTES', 3, int))
+    post_check_threshold: float = field(default_factory=lambda: _env('POST_CHECK_THRESHOLD', 0.5, float))
+    post_check_timeout_ms: float = field(default_factory=lambda: _env('POST_CHECK_TIMEOUT_MS', 30000.0, float))
+    anthropic_api_key: str = field(default_factory=lambda: _env('ANTHROPIC_API_KEY', ''))
+
     # 빈 값이면 기록하지 않는다
     metrics_path: str = field(default_factory=lambda: os.environ.get('METRICS_PATH', 'gateway_metrics.jsonl'))

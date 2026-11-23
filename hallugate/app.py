@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from . import context as ctxmod
 from .config import Settings
 from .pipeline import RequestRecord, VerifyPipeline, is_english
+from .postcheck import skipped
 from .splitter import IncrementalSplitter
 from .tokens import make_tokens
 
@@ -72,13 +73,39 @@ async def _prepare(judge, ref, rec):
     return ref_idx
 
 
+async def _post_check(checker, ref, text, rec, cut, timeout_ms):
+    """응답 끝 2단 검증 (SPEC §5.3). 본문은 바꾸지 않고 결과 dict만 돌려준다. 실패는 verified=False(fail-open)."""
+    if cut:
+        res = skipped('cut')
+    elif checker is None:
+        res = skipped('unavailable')
+    else:
+        sp = IncrementalSplitter()
+        sents = [(s.idx, s.start, s.clean) for s in sp.feed(text) + sp.flush() if s.clean]
+        if not sents:
+            res = skipped('empty')
+        else:
+            try:
+                res = await asyncio.wait_for(checker.check(ref, sents), timeout_ms / 1000)
+            except asyncio.TimeoutError:
+                res = skipped('timeout')
+            except Exception:                                   # noqa: BLE001 — fail-open
+                res = skipped('error')
+    rec.post_check = res.to_dict()
+    return rec.post_check
+
+
 def _err(msg, status=400, kind='invalid_request_error'):
     return JSONResponse({'error': {'message': msg, 'type': kind}}, status_code=status)
 
 
-def create_app(settings=None, judge=None, http_client=None, store=None):
+def create_app(settings=None, judge=None, http_client=None, store=None, post_checker=None):
     settings = settings or Settings()
-    state = {'judge': judge, 'client': http_client, 'store': store}
+    if post_checker is None and settings.anthropic_api_key:
+        from .postcheck import ClaudePostChecker
+        post_checker = ClaudePostChecker(api_key=settings.anthropic_api_key, model=settings.post_check_model,
+                                         votes=settings.post_check_votes, threshold=settings.post_check_threshold)
+    state = {'judge': judge, 'client': http_client, 'store': store, 'post_checker': post_checker}
     tokens = make_tokens(settings.stride_tokenizer)
 
     def default_stride():
@@ -124,11 +151,15 @@ def create_app(settings=None, judge=None, http_client=None, store=None):
 
     @app.get('/health')
     async def health():
-        j, st = state['judge'], default_stride()
+        j, st, pc = state['judge'], default_stride(), state['post_checker']
         return {'ok': True, 'judge': type(j).__name__, 'input_mode': getattr(j, 'mode', ''),
                 'mode': settings.default_mode, 'action': settings.default_action, 'stride': st,
                 'stride_unit': tokens.name, 'threshold': j.threshold_for(st),
-                'collections': state['store'] is not None, 'collections_auth': bool(settings.admin_token)}
+                'collections': state['store'] is not None, 'collections_auth': bool(settings.admin_token),
+                'post_check': {'available': pc is not None, 'default': settings.post_check_default,
+                               'model': getattr(pc, 'model', settings.post_check_model),
+                               'votes': getattr(pc, 'votes', settings.post_check_votes),
+                               'threshold': getattr(pc, 'threshold', settings.post_check_threshold)}}
 
     # ---------- 컬렉션 문서 등록 API (SPEC §2.5) ----------
     def _admin(request):
@@ -206,7 +237,9 @@ def create_app(settings=None, judge=None, http_client=None, store=None):
                             collection=coll or '', retrieve_ms=retrieve_ms if coll else 0.0,
                             n_evidence=len(evidence or []))
         thr = judge.threshold_for(stride)
-        vh = {'x-verification-mode': mode, 'x-verification-action': action, 'x-verification-stride': str(stride)}
+        pc_on = bool(opts.get('post_check', settings.post_check_default)) and mode != 'off'
+        vh = {'x-verification-mode': mode, 'x-verification-action': action, 'x-verification-stride': str(stride),
+              'x-verification-post-check': 'on' if pc_on else 'off'}
         if coll:
             vh['x-verification-evidence'] = str(len(evidence or []))
         ev_info = ({'kind': 'evidence', 'collection': coll, 'retrieve_ms': retrieve_ms,
@@ -259,6 +292,9 @@ def create_app(settings=None, judge=None, http_client=None, store=None):
                                     'verified': rec.verified,
                                     **({'collection': coll, 'evidence': ev_info['evidence']} if ev_info else {}),
                                     **({'reason': rec.unverified_reason} if not rec.verified else {})}
+            if pc_on:
+                data['verification']['post_check'] = await _post_check(state['post_checker'], ref, content, rec, rec.cut,
+                                                                       settings.post_check_timeout_ms)
             rec.t_client_done = rec.now()
             _log(rec)
             return JSONResponse(data, headers=vh)
@@ -294,6 +330,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None):
                     c['verification'] = verification
                 return _sse(c)
 
+            delivered = ''                                        # 사용자에게 나간 본문 (2단 검증 대상)
             try:
                 ref_idx = await _prepare(judge, ref, rec)
                 yield chunk(delta={'role': 'assistant', 'content': ''})
@@ -306,6 +343,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None):
                         yield _sse(ev.info)
                     elif ev.kind == 'text':
                         if ev.text:
+                            delivered += ev.text
                             yield chunk(delta={'content': ev.text})
                     elif ev.kind == 'verdict':
                         yield chunk(verification=ev.info)
@@ -313,6 +351,9 @@ def create_app(settings=None, judge=None, http_client=None, store=None):
                         yield chunk(finish='content_filter', verification={'cut': True, **ev.info})
                 if not rec.cut:
                     yield chunk(finish=meta.get('finish_reason', 'stop'))
+                if pc_on:                                         # 종료 청크 뒤, usage·[DONE] 앞에 1회 (SPEC §5.3)
+                    yield chunk(verification=await _post_check(state['post_checker'], ref, delivered, rec, rec.cut,
+                                                               settings.post_check_timeout_ms))
                 if meta.get('usage'):
                     yield _sse({**json.loads(chunk()[6:]), 'usage': meta['usage']})
                 yield 'data: [DONE]\n\n'

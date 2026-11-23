@@ -60,6 +60,7 @@ class RequestRecord:
     n_evidence: int = 0
     sentences: list = field(default_factory=list)
     checks: list = field(default_factory=list)
+    post_check: dict = None            # 응답 끝 2단 검증 결과 (SPEC §5.3)
 
     def now(self):
         return (time.perf_counter() - self.t0) * 1000

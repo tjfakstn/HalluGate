@@ -3,7 +3,7 @@
 게이트웨이가 **무엇을 어떻게 해야 하는지**를 정의한다. 수치·실험 결과·결정 이력은 [SSOT.md](SSOT.md)에 있다.
 구현이 이 명세와 다르면 둘 중 하나를 고치고, 명세를 바꾸는 경우 SSOT의 결정 기록에 남긴다.
 
-상태 표기: ✅ 구현·테스트됨 · 🚧 부분 구현 · 📋 계획(S4 이후)
+상태 표기: ✅ 구현·테스트됨 · 🧪 실험 기능(구현·테스트됨, 효과 미검증, 기본 꺼짐) · 🚧 부분 구현 · 📋 계획(S4 이후)
 
 ---
 
@@ -57,7 +57,8 @@ OpenAI Chat Completions 요청을 그대로 받는다. 추가 필드 하나를 �
     "action": "flag" | "cut",            // 기본: 서버 설정 VERIFY_ACTION (flag)
     "stride": 8,                         // 선택. 문장 앞부분 재판정 간격(tiktoken cl100k 토큰, §5.1). 0이면 끔. 기본: JUDGE_STRIDE, 없으면 판정기 설정 파일(F1 base 8)
     "collection": "id",                  // 선택. 등록된 컬렉션에서 근거 검색 + 프롬프트 삽입 (§2.5, §2.6)
-    "regenerate": true | false           // 📋 선택. hold에서 환각 문장 재생성 (§5.2). 기본 false
+    "regenerate": true | false,          // 📋 선택. hold에서 환각 문장 재생성 (§5.2). 기본 false
+    "post_check": true | false           // 🧪 선택. 응답 끝 2단 검증 (§5.3). 기본: 서버 설정 POST_CHECK (false)
   }
 }
 ```
@@ -72,8 +73,8 @@ OpenAI Chat Completions 요청을 그대로 받는다. 추가 필드 하나를 �
 - `verification` 필드는 업스트림에 보내기 전에 제거한다 (실제 API는 모르는 필드를 거부함).
 - 인증: 서버 설정 `UPSTREAM_API_KEY`가 있으면 그것을, 없으면 요청의 `Authorization` 헤더를 그대로 전달한다.
 - 업스트림이 200이 아니면 상태 코드와 본문을 그대로 돌려준다.
-- 잘못된 `mode`/`action` → 400 `invalid_request_error`.
-- 응답 헤더: `x-verification-mode`, `x-verification-action`, `x-verification-stride`.
+- 잘못된 `mode`/`action`, 불리언이 아닌 `post_check` → 400 `invalid_request_error`.
+- 응답 헤더: `x-verification-mode`, `x-verification-action`, `x-verification-stride`, `x-verification-post-check`(`on`/`off`).
 - 요청 헤더 `x-request-tag`는 측정 기록의 식별자로 저장한다.
 
 ### 2.2 스트리밍 응답 ✅
@@ -112,7 +113,7 @@ cut 발생 시 종료 청크에 `{"cut": true, "sentence_idx": n}`이 함께 실
 그 밖의 조합에서는 본문을 바꾸지 않는다. `cut`이면 판정을 첫 환각 문장에서 멈춘다.
 
 ### 2.4 `GET /health` ✅
-`{"ok": true, "judge": "<판정기 클래스>", "input_mode": "retrieval|full", "mode": "...", "action": "...", "stride": 8, "stride_unit": "cl100k_base", "threshold": 3.969}`
+`{"ok": true, "judge": "<판정기 클래스>", "input_mode": "retrieval|full|combo", "mode": "...", "action": "...", "stride": 8, "stride_unit": "cl100k_base", "threshold": 2.7385, "post_check": {"available": true, "default": false, "model": "...", "votes": 3, "threshold": 0.5}}`
 
 ### 2.5 문서 등록 API ✅
 | 요청 | 동작 |
@@ -245,6 +246,28 @@ hold에서 환각으로 판정된 문장은 아직 사용자에게 나가지 않
 - 해소율·추가 지연을 측정 기록에 남긴다.
 - 불변식 G2는 "사용자에게 전달된 본문 = 최종 업스트림 본문 중 버리지 않은 부분"으로 해석한다(버린 문장은 전달되지 않음).
 
+### 5.3 응답 끝 2단 검증 (`post_check`) 🧪 실험 기능
+
+경량 판정기(1단)는 스트리밍 중 빠르게 판정하지만 환각을 많이 놓친다(SSOT §5 X2: FaithBench 탐지율 11.8%). 2단은 **응답이 끝난 뒤 강한 검증기(Claude)가 응답 전체를 근거와 다시 대조해** 결과를 한 번 보낸다.
+J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐**이고 검증기 설정은 임시값이다. J2가 채택되면 J2가 고른 검증기·임계값으로 바꾼다(SSOT §6 J2).
+
+- **켜기**: 요청 `verification.post_check: true` 또는 서버 `POST_CHECK=1`. 근거가 없어 `mode=off`이면 하지 않는다. 검증기가 준비되지 않았으면(`ANTHROPIC_API_KEY` 없음) 결과 청크 `verified: false, reason: "unavailable"`
+- **검증기 `ClaudePostChecker`**: 응답 전체를 1단과 같은 문장 분할(`IncrementalSplitter`)로 나눠 번호를 붙이고, 근거와 함께 `POST_CHECK_MODEL`(기본 `claude-sonnet-5-5`)에 **`POST_CHECK_VOTES`번(기본 3) 동시에** 문장별 S/H/A 판정을 요청한다(J2 `sonnet_H`와 같은 지시문·파싱)
+  - 응답 점수 `score` = 판정 중 H 문장이 하나라도 있다고 본 비율. `flagged = score ≥ POST_CHECK_THRESHOLD`(기본 0.5 = 과반)
+  - 문장마다 `h_votes`(H로 본 판정 수)와 `flagged = h_votes / 유효 판정 수 ≥ 임계값`, 처음 H로 본 판정의 `phrase`·`reason`
+  - 파싱에 실패한 판정은 H 없음으로 센다(J1·J2와 같음). 모든 판정이 실패하면 `verified: false, reason: "error"`
+- **전달 시점**: 스트리밍은 종료 청크(`finish_reason`) **뒤**, `usage` 청크와 `[DONE]` 앞에 판정 청크 1회. 본문은 이미 다 나갔으므로 **본문은 바꾸지 않는다**(G2 그대로). 비스트리밍은 응답 `verification.post_check`
+  ```jsonc
+  {"kind": "post_check", "verified": true, "model": "claude-sonnet-5-5", "votes": 3, "valid_votes": 3,
+   "score": 0.667, "threshold": 0.5, "flagged": true, "check_ms": 2310.4,
+   "sentences": [{"sentence_idx": 1, "start": 42, "h_votes": 2, "flagged": true, "phrase": "...", "reason": "..."}]}
+  ```
+- **하지 않는 경우**: `cut`으로 응답이 끊겼으면 `verified: false, reason: "cut"`. 판정할 문장이 없으면 `reason: "empty"`
+- **fail-open**: `POST_CHECK_TIMEOUT_MS`(기본 30,000)를 넘거나 API 오류면 `verified: false, reason: "timeout" | "error"`. 1단 결과와 본문에는 영향 없음
+- 1단 점수로 2단에 보낼 응답을 거르는 기능(J1-3)은 아직 없다 — 켜면 모든 응답을 검증한다
+- 측정 기록 `post_check`(결과 청크와 같은 내용)
+- 비용·지연: 응답마다 검증 모델 호출 `POST_CHECK_VOTES`번(실시간 단가). 지연은 응답 끝 이후에만 생긴다
+
 ## 6. 측정 기록 ✅
 
 요청마다 `METRICS_PATH`(JSONL)에 한 줄을 남긴다 (`RequestRecord`). 시각은 요청 수신 기준 ms.
@@ -284,6 +307,10 @@ hold에서 환각으로 판정된 문장은 아직 사용자에게 나가지 않
 | `COLLECTION_EMBEDDER` | 판정기 임베더 | 컬렉션 검색 임베더 |
 | `COLLECTION_TOP_K` / `COLLECTION_CHUNK_WORDS` / `COLLECTION_OVERLAP` | 4 / 120 / 20 | 검색 조각 수, 조각 크기·겹침(단어) |
 | `ADMIN_TOKEN` | (빈 값) | 문서 등록 API 접근 토큰. 비우면 열림 |
+| `POST_CHECK` | `0` | `1`이면 요청에 지정이 없을 때 2단 검증을 켠다 (§5.3) |
+| `POST_CHECK_MODEL` / `POST_CHECK_VOTES` / `POST_CHECK_THRESHOLD` | `claude-sonnet-5-5` / 3 / 0.5 | 2단 검증 모델, 판정 횟수, 응답 표시 임계값(H로 본 판정 비율) |
+| `POST_CHECK_TIMEOUT_MS` | 30000 | 2단 검증 시간 제한, 넘으면 `verified: false` |
+| `ANTHROPIC_API_KEY` | (빈 값) | 2단 검증용. 없으면 2단 검증 불가(`unavailable`) |
 | `METRICS_PATH` | `gateway_metrics.jsonl` | 빈 값이면 기록 안 함 |
 
 ## 8. 수용 기준
@@ -303,6 +330,7 @@ hold에서 환각으로 판정된 문장은 아직 사용자에게 나가지 않
 | A11 | 고정 예제(`parity_fixture.json`) 점수 일치 \|Δlogit\| ≤ 0.2 | ✅ F1 base 50개 최대 0.000016 (맥 CPU, `load_judge` 경로, `JUDGE_PARITY_DIR` 테스트) |
 | A12 | 판정기 장애·시간 초과·비영어에서 본문 보존 100%, `verified: false` 1회 | ✅ 테스트 |
 | A13 | 조합 판정기: 점수 = 하위 판정기 표준화 평균(노트북 `combine`과 같은 값), 간격별 임계값 B 적용, 게이트웨이에서 그대로 동작 | ✅ 테스트(작은 임의 모델). 실제 가중치 점수 일치는 가중치 확보 후 |
+| A14 | 2단 검증: 켜면 응답 끝에 결과 청크 1회(종료 청크 뒤, `[DONE]` 앞), 본문 보존 100%, 검증기 오류·시간 초과·미설정에서 `verified: false`로 본문 영향 없음, 끄면 아무것도 안 보냄 | ✅ 테스트(가짜 Claude 클라이언트). 탐지 성능은 J2 |
 
 ## 9. 로드맵
 

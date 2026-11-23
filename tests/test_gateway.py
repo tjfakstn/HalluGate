@@ -715,6 +715,8 @@ async def test_combo_member_failure_fails_open(tmp_path):
 def test_combo_config_v1_matches_analysis():
     # 저장소의 배포 조합 설정이 실험 결과 파일(I3 표준화 상수, K2 서비스 임계값 B)과 같은지
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if not os.path.exists(os.path.join(root, 'configs', 'judge_combo_v1.json')):
+        pytest.skip('저장소 설정·분석 파일이 없는 환경(S3 노트북)')
     cfg = json.load(open(os.path.join(root, 'configs', 'judge_combo_v1.json')))
     i3 = json.load(open(os.path.join(root, 'docs', 'analysis', 'i3', 'i3_summary.json')))['standardize']
     k2 = json.load(open(os.path.join(root, 'docs', 'analysis', 'k2', 'k2b', 'k2_summary.json')))['thr']['old']
@@ -722,3 +724,160 @@ def test_combo_config_v1_matches_analysis():
     assert cfg['standardize']['F'] == i3['Fb'] and cfg['standardize']['I'] == i3['I2']
     assert cfg['thresholds']['8'] == {'svcB': k2['B'], 'svc10_orig': k2['A']} and cfg['threshold'] == k2['B']
     assert cfg['default'] == {'kind': '8', 'threshold': 'svcB'}
+
+
+# ---------------- 응답 끝 2단 검증 (SPEC §5.3 post_check, A14) ----------------
+import asyncio                                                    # noqa: E402
+import re as _re                                                  # noqa: E402
+from types import SimpleNamespace                                 # noqa: E402
+
+
+class FakeClaude:
+    """anthropic.AsyncAnthropic 대역: messages.create(**params) → 응답 객체. fn(params, k)가 텍스트를 만든다."""
+    def __init__(self, fn, delay=0.0):
+        self.calls, self.fn, self.delay = [], fn, delay
+        self.messages = self
+
+    async def create(self, **p):
+        k = len(self.calls); self.calls.append(p)
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        return SimpleNamespace(content=[SimpleNamespace(type='text', text=self.fn(p, k))], stop_reason='end_turn',
+                               usage=SimpleNamespace(input_tokens=100, output_tokens=20))
+
+
+def rocket_labels(p, k):
+    # 번호 붙은 문장 중 'rockets'가 든 문장만 H
+    lines = _re.findall(r'^\[(\d+)\] (.*)$', p['messages'][0]['content'], _re.M)
+    return json.dumps({'sentences': [{'i': int(i), 'label': 'H' if 'rockets' in t else 'S',
+                                      **({'phrase': 'flew rockets', 'reason': 'not in reference'} if 'rockets' in t else {})}
+                                     for i, t in lines]})
+
+
+def _pc_client(tmp_path, checker=None, **kw):
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path=str(tmp_path / 'm.jsonl'), stride_tokenizer='words',
+                 collection_db='', anthropic_api_key='', **kw)
+    app = create_app(s, judge=LexicalJudge(threshold=0.5), http_client=up, post_checker=checker)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://gw'), s
+
+
+async def run_chunks(client, b):
+    r = await client.post('/v1/chat/completions', json=b)
+    assert r.status_code == 200, r.text
+    out = []
+    for line in r.text.splitlines():
+        if line.startswith('data:'):
+            out.append('DONE' if line.endswith('[DONE]') else json.loads(line[5:]))
+    return r, out
+
+
+def _pc_body(post_check=True, mode='hold', action='flag', stream=True):
+    b = body(BAD_2ND, mode, action, stream)
+    if post_check is not None:
+        b['verification']['post_check'] = post_check
+    return b
+
+
+def _post(out):
+    return [c['verification'] for c in out if c != 'DONE' and (c.get('verification') or {}).get('kind') == 'post_check']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['pass', 'hold'])
+async def test_post_check_stream(tmp_path, mode):
+    from hallugate.postcheck import ClaudePostChecker
+    fc = FakeClaude(rocket_labels)
+    client, s = _pc_client(tmp_path, ClaudePostChecker(client=fc, model='claude-sonnet-5-5', votes=3, threshold=0.5))
+    r, out = await run_chunks(client, _pc_body(mode=mode))
+    assert r.headers['x-verification-post-check'] == 'on'
+    text = ''.join(ch['delta'].get('content') or '' for c in out if c != 'DONE' for ch in c['choices'])
+    assert text == BAD_2ND                                            # 본문 보존
+    # 순서: ... 종료 청크 → post_check 청크 → [DONE]
+    i_fin = next(i for i, c in enumerate(out) if c != 'DONE' and c['choices'] and c['choices'][0].get('finish_reason'))
+    assert (out[i_fin + 1].get('verification') or {}).get('kind') == 'post_check' and out[i_fin + 2] == 'DONE'
+    pc = _post(out)
+    assert len(pc) == 1
+    pc = pc[0]
+    assert pc['verified'] and pc['flagged'] and pc['score'] == 1.0 and pc['votes'] == pc['valid_votes'] == 3
+    assert pc['model'] == 'claude-sonnet-5-5' and pc['threshold'] == 0.5 and pc['check_ms'] >= 0
+    flagged = [x for x in pc['sentences'] if x['flagged']]
+    assert [x['sentence_idx'] for x in flagged] == [1] and flagged[0]['h_votes'] == 3 and flagged[0]['phrase'] == 'flew rockets'
+    assert len(fc.calls) == 3 and all(c['model'] == 'claude-sonnet-5-5' for c in fc.calls)
+    assert REF in fc.calls[0]['messages'][0]['content'] and '[2] Its chief executive flew rockets' in fc.calls[0]['messages'][0]['content']
+    rec = json.loads(open(s.metrics_path).read().splitlines()[-1])
+    assert rec['post_check']['flagged'] is True
+
+
+@pytest.mark.asyncio
+async def test_post_check_off_by_default(tmp_path):
+    from hallugate.postcheck import ClaudePostChecker
+    fc = FakeClaude(rocket_labels)
+    client, _ = _pc_client(tmp_path, ClaudePostChecker(client=fc))
+    r, out = await run_chunks(client, _pc_body(post_check=None))
+    assert _post(out) == [] and fc.calls == [] and r.headers['x-verification-post-check'] == 'off'
+    # 서버 기본값을 켜면 요청에 없어도 한다
+    client, _ = _pc_client(tmp_path, ClaudePostChecker(client=fc), post_check_default=True)
+    _, out = await run_chunks(client, _pc_body(post_check=None))
+    assert len(_post(out)) == 1 and len(fc.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_post_check_votes_and_parse_failure(tmp_path):
+    from hallugate.postcheck import ClaudePostChecker
+    # 판정 3번: H, 파싱 실패, 모두 S → 응답 점수 1/3 < 0.5 → 표시 안 함. 문장은 유효 판정 2개 중 1개 H = 0.5 → 표시
+    def fn(p, k):
+        if k == 1:
+            return 'not json'
+        return rocket_labels(p, k) if k == 0 else rocket_labels(p, k).replace('"H"', '"S"')
+    client, _ = _pc_client(tmp_path, ClaudePostChecker(client=FakeClaude(fn), votes=3, threshold=0.5))
+    _, out = await run_chunks(client, _pc_body())
+    pc = _post(out)[0]
+    assert pc['verified'] and pc['valid_votes'] == 2 and abs(pc['score'] - 1 / 3) < 1e-9 and not pc['flagged']
+    assert [x['sentence_idx'] for x in pc['sentences'] if x['flagged']] == [1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['error', 'all_bad', 'timeout', 'unavailable', 'cut'])
+async def test_post_check_fail_open(tmp_path, case):
+    from hallugate.postcheck import ClaudePostChecker
+    def boom(p, k):
+        raise RuntimeError('api down')
+    checker = {'error': ClaudePostChecker(client=FakeClaude(boom)),
+               'all_bad': ClaudePostChecker(client=FakeClaude(lambda p, k: 'nope')),
+               'timeout': ClaudePostChecker(client=FakeClaude(rocket_labels, delay=0.5)),
+               'unavailable': None, 'cut': ClaudePostChecker(client=FakeClaude(rocket_labels))}[case]
+    client, _ = _pc_client(tmp_path, checker, post_check_timeout_ms=100.0)
+    _, out = await run_chunks(client, _pc_body(action='cut' if case == 'cut' else 'flag'))
+    text = ''.join(ch['delta'].get('content') or '' for c in out if c != 'DONE' for ch in c['choices'])
+    assert text == ('The company was founded in 1998 in Seoul. ' if case == 'cut' else BAD_2ND)
+    pc = _post(out)
+    want = {'error': 'error', 'all_bad': 'error', 'timeout': 'timeout', 'unavailable': 'unavailable', 'cut': 'cut'}[case]
+    assert len(pc) == 1 and pc[0]['verified'] is False and pc[0]['reason'] == want, pc
+    assert out[-1] == 'DONE'
+
+
+@pytest.mark.asyncio
+async def test_post_check_non_stream_and_validation(tmp_path):
+    from hallugate.postcheck import ClaudePostChecker
+    client, _ = _pc_client(tmp_path, ClaudePostChecker(client=FakeClaude(rocket_labels)))
+    r = await client.post('/v1/chat/completions', json=_pc_body(stream=False))
+    d = r.json()
+    assert d['choices'][0]['message']['content'] == BAD_2ND
+    assert d['verification']['post_check']['flagged'] is True
+    bad = _pc_body(); bad['verification']['post_check'] = 'yes'
+    assert (await client.post('/v1/chat/completions', json=bad)).status_code == 400
+    h = (await client.get('/health')).json()['post_check']
+    assert h == {'available': True, 'default': False, 'model': 'claude-sonnet-5-5', 'votes': 3, 'threshold': 0.5}
+
+
+def test_post_check_prompt_matches_j2():
+    # 2단 검증 지시문 = J2 노트북 sonnet_H 후보 지시문 (J2 결과를 그대로 옮겨 쓰기 위해)
+    from hallugate.postcheck import SYSTEM
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, 'experiments', 'builders', 'build_j2.py')
+    if not os.path.exists(path):
+        pytest.skip('실험 builder가 없는 환경(S3 노트북)')
+    src = open(path, encoding='utf-8').read()
+    i = src.index("SYS_SENT = '''") + len("SYS_SENT = '''")
+    assert src[i:src.index("'''", i)] == SYSTEM

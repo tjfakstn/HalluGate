@@ -7,5 +7,6 @@ torch
 transformers
 sentence-transformers
 openai
+anthropic
 pytest
 pytest-asyncio
