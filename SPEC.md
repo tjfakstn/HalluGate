@@ -38,7 +38,7 @@ hallugate는 서비스와 LLM API 사이에 위치하는 **OpenAI Chat Completio
 ### 비목표
 - 근거 문서 없는 사실성 검증, 웹 검색 기반 검증
 - 응답 문장 고쳐 쓰기(교정 모델). 단, hold에서 아직 나가지 않은 문장의 재생성은 지원(§5.2 📋)
-- 인증·과금·레이트 리밋 (운영용 게이트웨이 기능)
+- 과금·결제, 셀프 가입, 여러 지역 배포, SLA. (인증·사용자 분리·사용량 제한은 운영 모드에서만 지원 — §10)
 
 ## 2. API
 
@@ -138,17 +138,17 @@ cut 발생 시 종료 청크에 `{"cut": true, "sentence_idx": n}`이 함께 실
 - `mode=off`여도 검색·삽입은 한다(RAG만 쓰고 검증은 끄는 경우). 질문이 비어 조각을 못 찾으면 삽입 없이 `mode=off`.
 - 측정 기록: `collection`, `retrieve_ms`, `n_evidence`.
 
+### 2.7 업스트림
+- 📋 `UPSTREAM_PROVIDER=openai|anthropic`. OpenAI 형식은 그대로 통과, Claude는 Messages API로 변환해 호출하고 응답을 OpenAI 청크 형식으로 되돌린다.
+- ✅ 스트리밍의 `delta.tool_calls`·`function_call`·`refusal`은 판정 없이 도착 즉시 그대로 통과한다(본문과 같은 청크에 있으면 분리해 보냄).
+  `usage` 청크(`stream_options.include_usage`)는 종료 청크 뒤, `[DONE]` 앞에 보낸다. 업스트림 `finish_reason`(예: `tool_calls`)을 유지한다.
+
 ### 2.8 데모 화면 `GET /demo` ✅
 발표·시연용 웹 페이지 한 장(`hallugate/static/demo.html`, 외부 리소스 없음 — 인터넷 없이 동작). 게이트웨이와 같은 주소에서 열리고, 일반 클라이언트처럼 `POST /v1/chat/completions`(스트리밍)만 호출한다. 서버 동작은 바꾸지 않는다.
 - 입력: 근거 문서(또는 등록된 컬렉션), 질문, 모델 이름, 검증 옵션(`mode`·`action`·`stride`·`post_check`). 예제 시나리오(멀쩡한 답, 근거와 모순, 근거에 없는 내용)를 고르면 입력이 채워진다
 - **가짜 LLM 응답**: 칸을 채우면 요청에 `mock_response`·`mock_token_ms`를 넣는다(가짜 LLM `mock_upstream.py` 전용). 실제 LLM에 연결했을 때는 비워 둔다(실제 API는 모르는 필드를 거부함)
 - 출력: 본문이 흘러나오는 대로 표시하고, 판정 청크가 오면 해당 구간(`start`~`upto`)을 색으로 칠한다(문장 판정: 안전/환각, 앞부분 판정: 문장 도중 경보 표시). 2단 검증 결과는 문장별 표시와 응답 점수로, 근거 청크는 사용한 조각 목록으로, 검증 중단은 알림으로 보인다. 첫 글자까지 시간·전체 시간·판정 수·판정 시간을 함께 보인다
 - `DEMO=0`이면 404 (운영에서 끄기)
-
-### 2.7 업스트림
-- 📋 `UPSTREAM_PROVIDER=openai|anthropic`. OpenAI 형식은 그대로 통과, Claude는 Messages API로 변환해 호출하고 응답을 OpenAI 청크 형식으로 되돌린다.
-- ✅ 스트리밍의 `delta.tool_calls`·`function_call`·`refusal`은 판정 없이 도착 즉시 그대로 통과한다(본문과 같은 청크에 있으면 분리해 보냄).
-  `usage` 청크(`stream_options.include_usage`)는 종료 청크 뒤, `[DONE]` 앞에 보낸다. 업스트림 `finish_reason`(예: `tool_calls`)을 유지한다.
 
 ## 3. 문장 분할 — `IncrementalSplitter` ✅
 
@@ -349,3 +349,84 @@ J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐*
 | S4 | ~~재판정 간격 토큰 단위, `tool_calls`·`usage` 통과(A10), 판정기 설정 파일, 언어 감지, fail-open~~ ✅(11/05), ~~컬렉션 API·저장소·검색·프롬프트 삽입·`evidence`(§2.5·2.6, A9), 문서 API 접근 토큰~~ ✅(11/05), Claude Messages API 변환(§2.7), 재생성(§5.2), 판정 묶음 처리, 배포 후 실제 LLM 속도로 종단 간 재측정 |
 | S5 | RAGTruth test 1회 개방 최종 평가, 기존 도구의 고정 설정(NeMo Guardrails의 chunk 200 등)과 비교 |
 | S6 | ~~데모 화면(판정 시각화, `/demo`)~~ ✅(11/23), 시연 시나리오·녹화, 보고서, SOFTCON |
+| 운영 | 관리형 베타(§10): 인증·사용자 분리 → 사용량 제한·업스트림 허용 목록 → 원문 없는 기록·관리자 통계 → Modal 배포·운영 문서 → 실제 측정(H8) |
+
+## 10. 운영 모드 (관리형 베타) 📋
+
+**목적**: 게이트웨이를 직접 운영하며 지연·비용·장애를 실제 트래픽으로 다뤄 본다(SSOT §7 11/23). 초대한 사용자에게만 API 키를 발급하는 **관리형 베타**이며, 결제·셀프 가입은 하지 않는다.
+**대상**: **영어 RAG 응답만** 검증한다. 판정기가 영어 데이터로만 학습됐기 때문이다(§4 언어 감지: 영어가 아니면 `verified: false, reason: "non_english"`로 본문은 그대로 전달).
+
+`HOSTED=1`일 때만 이 절의 규칙이 적용된다. 꺼져 있으면(기본) 지금까지의 셀프호스팅 동작이 그대로다(§1~9, 기존 테스트 그대로 통과).
+
+### 10.1 인증 — 게이트웨이 API 키
+- 모든 `/v1/*` 요청은 헤더 **`x-hallugate-key: hg_<키 ID>_<비밀>`**이 있어야 한다. 없거나 틀리거나 폐기된 키 → 401 `authentication_error`. `Authorization` 헤더는 쓰지 않는다(사용자의 LLM 키를 담아 업스트림에 넘기는 용도, §10.3)
+  - OpenAI SDK: `OpenAI(base_url=..., api_key=<LLM 키>, default_headers={"x-hallugate-key": "hg_..."})`
+- 키는 **해시(SHA-256)만** 저장한다(`KEYS_DB`, SQLite): 키 ID, 해시, 이름(사용자 메모), 만든 시각, 폐기 시각, 한도(§10.4). 비밀 원문은 발급할 때 한 번만 보여 준다
+- 발급·조회·폐기는 관리자 스크립트로만 한다: `python scripts/keys.py create --name ...` / `list` / `revoke <키 ID>`. 셀프 가입 없음
+- `/demo`(§2.8): 운영 모드에서는 화면에서 게이트웨이 키·LLM 키·업스트림을 입력받아 요청 헤더로 보낸다. 키는 그 브라우저 탭의 저장소(sessionStorage)에만 두고 서버에 저장하지 않는다. 가짜 LLM은 배포하지 않으므로 실제 업스트림으로만 동작한다
+- `/health`는 인증 없이 열지만 운영 모드에서는 `{"ok": true}`와 버전만 준다(판정기 내부 값 숨김). `/admin/*`는 `ADMIN_TOKEN`(`Authorization: Bearer`)이 있어야 한다
+
+### 10.2 사용자 분리 — 컬렉션
+- 컬렉션은 **키 ID(사용자) 단위로 분리**한다. 같은 이름 `docs`라도 사용자마다 다른 컬렉션이다
+- 남의 컬렉션은 목록·검색·문서 조회·삭제 어디서도 보이지 않는다(없는 것과 같은 404). 채팅 요청의 `verification.collection`도 자기 컬렉션만 찾는다
+- 운영 모드에서 문서 API는 `ADMIN_TOKEN`이 아니라 사용자 키로 쓴다(사용자가 자기 문서를 관리)
+- 한도: 사용자당 문서 수 `MAX_DOCS`(기본 200), 문서 하나 `MAX_DOC_CHARS`(기본 200,000자). 넘으면 413
+
+### 10.3 업스트림 — 허용 목록
+- 헤더 **`x-upstream: openai | anthropic`**(기본 `openai`)로 고른다. 주소는 서버의 허용 목록에서만 정한다(`openai` → `https://api.openai.com/v1`, `anthropic` → `https://api.anthropic.com/v1`, Anthropic의 OpenAI SDK 호환 주소). **요청으로 임의 주소를 지정할 수 없다**(서버가 사용자 지정 주소를 호출하는 위험 방지). 목록에 없는 값 → 400
+- `Authorization`(사용자의 LLM 키)은 그대로 넘기고 **기록하지 않는다**. 없으면 업스트림의 401을 그대로 돌려준다. 운영 모드에서는 서버의 `UPSTREAM_API_KEY`를 **절대 쓰지 않는다**(사용자 요청에 운영자 키로 과금되지 않게)
+- Anthropic 호환 주소는 Anthropic이 시험·비교용으로 안내하는 계층이다. 스트리밍·`usage` 동작은 배포 후 실제로 확인하고 결과를 SSOT에 남긴다
+
+### 10.4 사용량 제한
+키마다 아래 한도를 둔다(키 생성 때 바꿀 수 있음, 기본값은 환경 변수). 넘으면 429 `rate_limit_error` + `retry-after` 헤더.
+
+| 한도 | 기본값 | 단위 |
+|---|---|---|
+| `RATE_RPM` | 30 | 분당 채팅 요청 |
+| `MAX_CONCURRENT` | 4 | 동시 스트리밍 요청 |
+| `POST_CHECK_DAILY` | 50 | 하루(UTC) 2단 검증 요청 — 2단은 운영자 Claude 키로 과금되므로 |
+| `MAX_REF_CHARS` | 50,000 | 요청 하나의 근거 문서 글자 수 (넘으면 413) |
+
+- 분당·동시 한도는 메모리에서 센다(컨테이너 1대 전제, §10.7). 하루 2단 검증 수는 SQLite에 남겨 컨테이너가 다시 떠도 유지한다
+
+### 10.5 기록·개인정보
+- 운영 모드의 측정 기록(§6)에는 **원문을 남기지 않는다**: 근거 문서, 응답 문장, 질문, 근거 조각 텍스트, 2단 `phrase`·`reason`을 빼고 **키 ID, 시각, 길이, 점수, 판정 여부, 지연, 업스트림 종류, 상태 코드, 검증 중단 이유**만 남긴다. 사용자에게 보내는 응답 청크는 바뀌지 않는다
+- 요청마다 원문 없는 JSON 한 줄을 표준 출력으로도 남긴다(플랫폼 로그)
+- 보관: 측정 기록 `METRICS_RETENTION_DAYS`(기본 30)일 뒤 지운다. 컬렉션 문서는 사용자가 지울 때까지 보관하고, 키를 폐기하며 `--purge`를 주면 그 사용자의 컬렉션·기록을 모두 지운다
+- 사용자의 LLM 키(`Authorization`)와 게이트웨이 키 비밀은 어디에도 기록하지 않는다
+
+### 10.6 관측 — `GET /admin/stats` (`ADMIN_TOKEN`)
+기간(`window`, 기본 24h) 동안: 요청 수(사용자별·업스트림별), 상태 코드별 수, 첫 글자 지연·전체 시간 p50/p95, 판정 시간 p95, 검증 중단 비율(이유별), 2단 검증 수와 추정 비용(응답의 토큰 사용량 × §5.3 모델 단가표), 429 수, **콜드 스타트**(컨테이너 시작 시각·예열 시간·시작 직후 첫 요청의 첫 글자 지연).
+
+### 10.7 배포 — Modal (서버리스 GPU)
+- 게이트웨이 전체(FastAPI + 조합 판정기)를 **GPU 컨테이너 하나**에 올린다(`deploy/modal_app.py`). 판정기를 따로 떼면 8토큰마다 네트워크 왕복이 생겨 실시간 조건(§4, A6)을 맞추기 어렵기 때문이다
+- 컨테이너 **최소 0대·최대 1대**(SQLite 쓰기 하나, 메모리 한도 계산), 요청이 없으면 `SCALEDOWN_SECONDS`(기본 300초) 뒤 내려간다. 시연 날처럼 필요하면 최소 1대로 바꿔 콜드 스타트를 없앤다
+- 저장: Modal Volume `/data`(키·컬렉션·사용량·측정 기록 SQLite), `/models`(판정기 가중치, 저장소에 넣지 않음). 비밀 값: Modal Secret(`ADMIN_TOKEN`, 2단 검증용 `ANTHROPIC_API_KEY`)
+- 컨테이너가 뜨면 판정기를 불러 예열하고(§4) 예열 시간을 기록한다
+- 배포는 `modal deploy deploy/modal_app.py`(수동). GitHub Actions 자동 배포는 저장소 CI가 동작할 때 붙인다
+- 운영 문서 `docs/OPERATIONS.md`: 배포, 키 발급·폐기, 한도 변경, 통계 보기, 장애 대응(판정기 오류·업스트림 장애·콜드 스타트·비용 급증), 비용 확인
+
+### 10.8 운영 설정 (환경 변수)
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `HOSTED` | `0` | `1`이면 이 절의 규칙 적용 |
+| `KEYS_DB` | `/data/hallugate.sqlite3` | 키·사용량 저장소 (운영 모드). 컬렉션은 `COLLECTION_DB` |
+| `RATE_RPM` / `MAX_CONCURRENT` / `POST_CHECK_DAILY` | 30 / 4 / 50 | 키별 기본 한도 (§10.4) |
+| `MAX_REF_CHARS` / `MAX_DOCS` / `MAX_DOC_CHARS` | 50,000 / 200 / 200,000 | 크기 한도 |
+| `METRICS_RETENTION_DAYS` | 30 | 측정 기록 보관 일수 |
+| `UPSTREAM_ALLOWLIST` | `openai=https://api.openai.com/v1,anthropic=https://api.anthropic.com/v1` | `x-upstream` 값 → 주소 |
+| `SCALEDOWN_SECONDS` | 300 | 요청이 없을 때 컨테이너를 내리기까지 (Modal) |
+
+### 10.9 수용 기준 (운영 모드)
+
+| ID | 기준 | 상태 |
+|---|---|---|
+| H1 | 키 없음·틀림·폐기 → 401, 저장소에는 해시만 있음 | 📋 |
+| H2 | 사용자 A가 B의 컬렉션을 목록·검색·조회·삭제·채팅 근거 어디서도 볼 수 없음 | 📋 |
+| H3 | 업스트림은 허용 목록 주소로만 호출, 운영자 `UPSTREAM_API_KEY`를 쓰지 않음, 사용자 LLM 키를 기록하지 않음 | 📋 |
+| H4 | 분당·동시·하루 2단·크기 한도를 넘으면 429/413, 한도 안에서는 영향 없음 | 📋 |
+| H5 | 운영 모드 측정 기록·표준 출력 로그에 원문(근거·문장·질문·조각·2단 이유)이 없음 | 📋 |
+| H6 | `HOSTED=0`이면 기존 동작·테스트 그대로 | 📋 |
+| H7 | `/admin/stats`가 §10.6 항목을 돌려줌, `ADMIN_TOKEN` 없으면 401 | 📋 |
+| H8 | Modal 배포 후 실제 측정: 콜드 스타트 시간, 따뜻한 상태 첫 글자 지연·판정 p95, 하루 비용 (SSOT에 기록) | 📋 |
