@@ -492,7 +492,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         # 근거 다이어트 (SPEC §2.9): 관련 조각만 LLM에 보내고 같은 조각으로 판정
         trim_info, tr = None, opts.get('trim')
         if tr and ref and not coll and mode != 'off':
-            k = tr['top_k'] if isinstance(tr, dict) else settings.collection_top_k
+            k = tr['top_k'] if isinstance(tr, dict) else settings.trim_top_k
             from_tag = not opts.get('context')
             query = ctxmod.strip_context_tags(ctxmod.last_user_text(body))
             trimmer = Trimmer(_trim_embedder(), settings.collection_chunk_words, settings.collection_overlap)

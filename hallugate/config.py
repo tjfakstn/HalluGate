@@ -76,6 +76,8 @@ class Settings:
     metrics_retention_days: int = field(default_factory=lambda: _env('METRICS_RETENTION_DAYS', 30, int))
     max_doc_chars: int = field(default_factory=lambda: _env('MAX_DOC_CHARS', 200000, int))
 
+    # 근거 다이어트 기본 조각 수 (SPEC §2.9). T1c 채택값 8 (top_k 4는 T1b에서 충실성 미달)
+    trim_top_k: int = field(default_factory=lambda: _env('TRIM_TOP_K', 8, int))
     # 데모 화면 GET /demo (SPEC §2.8). 0이면 끈다
     demo: bool = field(default_factory=lambda: _env('DEMO', True, lambda v: v.lower() not in ('0', 'false', 'no', 'off')))
 

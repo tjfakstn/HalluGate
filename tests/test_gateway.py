@@ -1380,7 +1380,8 @@ async def test_trim_noop_cases_and_validation(tmp_path):
     assert sent[-1]['messages'] == b['messages'] and r.headers['x-verification-trim'].split('/')[0] == r.headers['x-verification-trim'].split('/')[1]
     nb = _trim_body(GOOD, 'field', stream=False)                       # 비스트리밍
     v = (await client.post('/v1/chat/completions', json=nb)).json()['verification']
-    assert v['trim']['chunks_kept'] == s.collection_top_k == 2                 # 기본 조각 수 = COLLECTION_TOP_K
+    assert v['trim']['top_k'] == s.trim_top_k == 8 and Settings().trim_top_k == 8   # 기본 조각 수 = TRIM_TOP_K (T1c 채택값)
+    assert v['trim']['chunks_kept'] == min(8, v['trim']['chunks_total'])
     st.add('kb', DOC_A, doc_id='a')                                     # 컬렉션 요청에는 적용 안 함
     rb = rag_body(GOOD); rb['verification']['trim'] = True
     r = await client.post('/v1/chat/completions', json=rb)
