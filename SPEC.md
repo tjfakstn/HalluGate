@@ -180,6 +180,21 @@ class Judge:
 | `default.kind` | 기본 재판정 간격(`"8"` → 8토큰, `"end"` → 문장 끝만) |
 | `thresholds[간격][default.threshold]`, `threshold` | 간격별 임계값(예: `thresholds["8"]["svc10_orig"]` = 3.969). 해당 간격이 없으면 `threshold` |
 
+**조합 판정기 (`ComboJudge`, 배포 판정기 I3)** ✅ — 판정기 폴더의 `judge_config.json`이 `"type": "combo"`이면 하위 판정기 여러 개를 불러 점수를 합친다(SSOT §4).
+
+```jsonc
+{"type": "combo", "version": "1.0",
+ "members": {"F": "f1_base", "I": "i2"},                 // 하위 판정기 폴더(조합 폴더 기준 상대 경로 또는 절대 경로), 각자 자기 judge_config.json을 가짐
+ "standardize": {"F": {"mean": -3.679, "std": 2.187}, "I": {"mean": -4.456, "std": 2.401}},
+ "default": {"kind": "8", "threshold": "svcB"},
+ "thresholds": {"8": {"svcB": 2.7385, "svc10_orig": 2.9916}}, "threshold": 2.7385}
+```
+- 점수 = 하위 판정기 logit을 `(score − mean) / std`로 표준화한 값의 **평균**(클수록 환각). 노트북(I3·L3 `combine`)과 같은 식이다.
+- 하위 판정기는 요청마다 각자 근거를 준비하고(`prepare`), 판정 1회에서 **동시에** 실행한다(스레드 + GPU면 판정기마다 별도 CUDA 스트림, L3와 같은 방식). `judge_ms`는 두 판정을 포함한 벽시계 시간이다.
+- 하위 판정기의 임계값·재판정 간격 설정은 쓰지 않고, 조합 설정의 `thresholds`·`threshold`·`default`만 쓴다. `JUDGE_THRESHOLD`·`JUDGE_STRIDE`는 조합에 적용되고, `JUDGE_EMBEDDER`·`JUDGE_K` 등 입력 구성 변수는 하위 판정기에 적용하지 않는다(각자 설정 파일).
+- 조합의 문장 끝(`end`) 임계값은 보정하지 않았으므로, 설정에 없으면 `threshold`(8토큰 서비스 임계값 B)를 쓴다.
+- `/health`의 `judge`는 `ComboJudge`, `input_mode`는 `combo`. 컬렉션 검색 임베더를 비우면 retrieval 방식 하위 판정기의 임베더를 같이 쓴다.
+
 - 환경 변수(`JUDGE_EMBEDDER`·`JUDGE_K`·`JUDGE_MAX_LEN`·`JUDGE_CHUNK_WORDS`·`JUDGE_THRESHOLD`·`JUDGE_STRIDE`)를 지정하면 설정 파일보다 우선한다. `JUDGE_THRESHOLD`를 지정하면 간격별 임계값 대신 그 값 하나를 쓴다.
 - `hallucinated = score >= threshold_for(요청의 stride)`.
 - ModernBERT 판정기는 `attn_implementation=sdpa`, `reference_compile=False`(설정에 넣음)로 올린다.
@@ -287,13 +302,14 @@ hold에서 환각으로 판정된 문장은 아직 사용자에게 나가지 않
 | A10 | 스트리밍의 `tool_calls`·`usage` 청크 보존 | ✅ 테스트 (가짜 LLM) |
 | A11 | 고정 예제(`parity_fixture.json`) 점수 일치 \|Δlogit\| ≤ 0.2 | ✅ F1 base 50개 최대 0.000016 (맥 CPU, `load_judge` 경로, `JUDGE_PARITY_DIR` 테스트) |
 | A12 | 판정기 장애·시간 초과·비영어에서 본문 보존 100%, `verified: false` 1회 | ✅ 테스트 |
+| A13 | 조합 판정기: 점수 = 하위 판정기 표준화 평균(노트북 `combine`과 같은 값), 간격별 임계값 B 적용, 게이트웨이에서 그대로 동작 | ✅ 테스트(작은 임의 모델). 실제 가중치 점수 일치는 가중치 확보 후 |
 
 ## 9. 로드맵
 
 | 단계 | 내용 |
 |---|---|
 | S3 | ~~학습 판정기로 A5·A6 측정, CPU 판정 속도 측정~~ ✅, 중간보고 |
-| F | 모델 v1.0 동결: F1 base 판정기, `judge_config.json` v1.0(8토큰·서비스 10% 임계값, 재생성용 임계값), `judge_batch`, 고정 예제 일치 |
+| F | ~~조합 판정기(F1 base + I2) 게이트웨이 연결~~ ✅(11/23, A13). 모델 v1.0 동결: F1 base 판정기, `judge_config.json` v1.0(8토큰·서비스 10% 임계값, 재생성용 임계값), `judge_batch`, 고정 예제 일치 |
 | S4 | ~~재판정 간격 토큰 단위, `tool_calls`·`usage` 통과(A10), 판정기 설정 파일, 언어 감지, fail-open~~ ✅(11/05), ~~컬렉션 API·저장소·검색·프롬프트 삽입·`evidence`(§2.5·2.6, A9), 문서 API 접근 토큰~~ ✅(11/05), Claude Messages API 변환(§2.7), 재생성(§5.2), 판정 묶음 처리, 배포 후 실제 LLM 속도로 종단 간 재측정 |
 | S5 | RAGTruth test 1회 개방 최종 평가, 기존 도구의 고정 설정(NeMo Guardrails의 chunk 200 등)과 비교 |
 | S6 | 데모 (서비스 예제 + 판정 시각화), 보고서, SOFTCON |

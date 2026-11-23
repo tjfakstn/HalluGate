@@ -5,11 +5,14 @@
                        판정 텍스트 → 임베딩 → 유사한 조각 top-k (원문 순서) → 교차 인코더 [근거 조각, 문장 앞부분]
   full      (I2식)    : 교차 인코더 [근거 전체, 응답 처음부터 판정 지점까지]. 근거 검색 없음
 점수는 logit(클수록 환각). 임계값은 재판정 간격(stride)별로 설정 파일의 값을 쓴다.
+설정 파일이 "type": "combo"이면 하위 판정기 여러 개의 표준화 점수를 평균하는 ComboJudge를 만든다 (배포 판정기 I3).
 """
+import contextlib
 import json
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import torch
@@ -103,24 +106,103 @@ class StudentJudge:
         return ' ... '.join(ref.chunks[i] for i in sorted(top)), text
 
     @torch.no_grad()
-    def judge(self, ref, text, prior='', threshold=None):
-        """text: 판정할 문장(또는 문장 앞부분, 앞뒤 공백 제거), prior: 응답에서 그 문장 앞까지의 원문."""
-        t0 = time.perf_counter()
-        with self._lock:
+    def score(self, ref, text, prior='', stream=None):
+        """logit 하나. stream(CUDA 스트림)을 주면 그 스트림에서 계산하고 그 스트림만 기다린다(조합 판정기의 동시 실행용)."""
+        ctx = torch.cuda.stream(stream) if (stream is not None and self.device == 'cuda') else contextlib.nullcontext()
+        with self._lock, ctx:
             a, b = self._pair(ref, text, prior)
             enc = self.tok([a], [b], truncation='only_first', max_length=self.max_len,
                            return_tensors='pt').to(self.device)
             with torch.autocast(self.device, enabled=(self.device == 'cuda')):
-                score = float(self.model(**enc).logits.squeeze().float().cpu())
-            if self.device == 'cuda':
+                score = float(self.model(**enc).logits.squeeze().float().cpu())   # .cpu()가 현재 스트림을 기다림
+            if self.device == 'cuda' and stream is None:
                 torch.cuda.synchronize()
+        return score
+
+    def judge(self, ref, text, prior='', threshold=None):
+        """text: 판정할 문장(또는 문장 앞부분, 앞뒤 공백 제거), prior: 응답에서 그 문장 앞까지의 원문."""
+        t0 = time.perf_counter()
+        score = self.score(ref, text, prior)
         thr = self.threshold if threshold is None else threshold
         return Verdict(score, score >= thr, (time.perf_counter() - t0) * 1000)
 
 
+@dataclass
+class ComboRef:
+    refs: list            # 하위 판정기마다 RefIndex (members 순서)
+    prepare_ms: float
+
+
+class ComboJudge:
+    """하위 판정기 점수를 (score − mean) / std로 표준화해 평균한다 (SPEC §4, 노트북 I3·L3의 combine과 같은 식).
+    판정 1회에서 하위 판정기를 동시에 돌린다(스레드, GPU면 판정기마다 별도 CUDA 스트림)."""
+
+    mode = 'combo'
+
+    def __init__(self, members, thresholds=None, threshold=0.0, threshold_key='svcB', default_stride=0):
+        # members: [(이름, 판정기, mean, std), ...]
+        assert members and all(sd > 0 for _, _, _, sd in members), '하위 판정기와 양수 표준편차가 필요'
+        self.members = members
+        self.thresholds, self.threshold, self.threshold_key = thresholds or {}, threshold, threshold_key
+        self.default_stride = default_stride
+        self._pool = ThreadPoolExecutor(len(members), thread_name_prefix='combo')
+        self._streams = [torch.cuda.Stream() if getattr(j, 'device', '') == 'cuda' else None for _, j, _, _ in members]
+
+    @property
+    def embedder(self):
+        # 컬렉션 검색 임베더를 비웠을 때 같이 쓸 임베더: retrieval 방식 하위 판정기의 것
+        return next((e for _, j, _, _ in self.members for e in [getattr(j, 'embedder', None)] if hasattr(e, 'encode')), None)
+
+    def threshold_for(self, stride, key=None):
+        return (self.thresholds.get(_stride_key(stride)) or {}).get(key or self.threshold_key, self.threshold)
+
+    def prepare(self, reference):
+        t0 = time.perf_counter()
+        refs = [j.prepare(reference) for _, j, _, _ in self.members]
+        return ComboRef(refs, (time.perf_counter() - t0) * 1000)
+
+    @staticmethod
+    def _member_score(j, ref, text, prior, stream):
+        if hasattr(j, 'score'):
+            return j.score(ref, text, prior, stream=stream)
+        return j.judge(ref, text, prior).score                  # 대체 판정기(테스트)
+
+    def judge(self, ref, text, prior='', threshold=None):
+        t0 = time.perf_counter()
+        futs = [self._pool.submit(self._member_score, j, r, text, prior, st)
+                for (_, j, _, _), r, st in zip(self.members, ref.refs, self._streams)]
+        raw = [f.result() for f in futs]                         # 하위 판정기 예외는 그대로 올라가 fail-open으로 처리됨
+        score = sum((x - m) / sd for x, (_, _, m, sd) in zip(raw, self.members)) / len(self.members)
+        thr = self.threshold if threshold is None else threshold
+        return Verdict(score, score >= thr, (time.perf_counter() - t0) * 1000)
+
+
+def _load_combo(settings, cfg):
+    base = settings.judge_model_dir
+    std, members = cfg['standardize'], []
+    for name, sub in cfg['members'].items():
+        d = sub if os.path.isabs(sub) else os.path.join(base, sub)
+        if not os.path.isfile(os.path.join(d, 'config.json')):
+            raise FileNotFoundError(f'조합 하위 판정기 {name} 폴더가 없음: {d}')
+        mcfg = read_config(d)
+        j = StudentJudge(d, embedder=mcfg.get('embedder', 'sentence-transformers/all-MiniLM-L6-v2'), k=mcfg.get('k', 8),
+                         max_len=mcfg.get('max_len', 512), chunk_words=mcfg.get('chunk_words', 40),
+                         device=settings.judge_device, mode=input_mode(mcfg))
+        members.append((name, j, float(std[name]['mean']), float(std[name]['std'])))
+    dflt = cfg.get('default') or {}
+    kind = dflt.get('kind', 'end')
+    fixed = settings.judge_threshold
+    return ComboJudge(members, thresholds={} if fixed is not None else cfg.get('thresholds', {}),
+                      threshold=fixed if fixed is not None else cfg.get('threshold', 0.0),
+                      threshold_key=dflt.get('threshold', 'svcB'), default_stride=0 if kind == 'end' else int(kind))
+
+
 def load_judge(settings):
-    """판정기 폴더의 judge_config.json을 읽어 StudentJudge를 만든다. 환경 변수로 지정한 값이 설정 파일보다 우선한다."""
+    """판정기 폴더의 judge_config.json을 읽어 StudentJudge(또는 "type": "combo"면 ComboJudge)를 만든다.
+    환경 변수로 지정한 값이 설정 파일보다 우선한다."""
     cfg = read_config(settings.judge_model_dir)
+    if cfg.get('type') == 'combo':
+        return _load_combo(settings, cfg)
     pick = lambda env, key, default: env if env is not None else cfg.get(key, default)
     dflt = (cfg.get('default') or {})
     kind = dflt.get('kind', 'end')

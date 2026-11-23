@@ -1,0 +1,30 @@
+{
+ "type": "combo",
+ "version": "1.0",
+ "_comment": "배포 판정기 I3(SSOT §4). 이 파일을 judge_config.json으로 복사해 f1_base/·i2/ 하위 판정기 폴더와 같은 폴더에 두고 JUDGE_MODEL_DIR로 지정한다. 표준화 상수 = docs/analysis/i3/i3_summary.json, 임계값 svcB = K2 cal-M 멀쩡한 응답 10%(서비스, 11/13), svc10_orig = cal-L 서비스 10%",
+ "members": {
+  "F": "f1_base",
+  "I": "i2"
+ },
+ "standardize": {
+  "F": {
+   "mean": -3.6794357299804688,
+   "std": 2.1870224475860596
+  },
+  "I": {
+   "mean": -4.456174373626709,
+   "std": 2.400838851928711
+  }
+ },
+ "default": {
+  "kind": "8",
+  "threshold": "svcB"
+ },
+ "thresholds": {
+  "8": {
+   "svcB": 2.7385038673533924,
+   "svc10_orig": 2.991638706756592
+  }
+ },
+ "threshold": 2.7385038673533924
+}

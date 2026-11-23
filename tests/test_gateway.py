@@ -621,3 +621,104 @@ async def test_rag_non_stream_and_errors(tmp_path):
     n = len(sent)
     await run(client, b)
     assert sent[n]['messages'] == b['messages']
+
+
+# ---------------- 조합 판정기 (SPEC §4 ComboJudge, A13) ----------------
+def _combo_dir(tmp_path, thresholds=None):
+    words = 'the company was founded in seoul revenue billion dollars reported it'.split()
+    member_cfg = {'input': {'retrieval': None}, 'max_len': 64, 'default': {'kind': 'end'}, 'threshold': 99.0}
+    for name in ['f', 'i']:
+        d = tmp_path / name; d.mkdir()
+        _tiny_bert(d, words)
+        (d / 'judge_config.json').write_text(json.dumps(member_cfg))
+    cfg = {'type': 'combo', 'version': 'test', 'members': {'F': 'f', 'I': str(tmp_path / 'i')},   # 상대·절대 경로 모두
+           'standardize': {'F': {'mean': -1.0, 'std': 2.0}, 'I': {'mean': 0.5, 'std': 4.0}},
+           'default': {'kind': '8', 'threshold': 'svcB'},
+           'thresholds': thresholds if thresholds is not None else {'8': {'svcB': 0.25, 'svc10_orig': 0.4}}, 'threshold': 0.3}
+    (tmp_path / 'judge_config.json').write_text(json.dumps(cfg))
+    return tmp_path
+
+
+def test_combo_judge_standardized_mean(tmp_path):
+    from hallugate.judge import ComboJudge, load_judge
+    d = _combo_dir(tmp_path)
+    j = load_judge(Settings(judge_model_dir=str(d), judge_device='cpu'))
+    assert isinstance(j, ComboJudge) and j.mode == 'combo' and j.default_stride == 8
+    assert (j.threshold_for(8), j.threshold_for(8, 'svc10_orig'), j.threshold_for(0), j.threshold_for(4)) == (0.25, 0.4, 0.3, 0.3)
+    jf = load_judge(Settings(judge_model_dir=str(d / 'f'), judge_device='cpu'))
+    ji = load_judge(Settings(judge_model_dir=str(d / 'i'), judge_device='cpu'))
+    prior, text = 'The company was founded in 1998 in Seoul. ', 'It reported revenue.'
+    sf = jf.judge(jf.prepare(REF), text, prior).score
+    si = ji.judge(ji.prepare(REF), text, prior).score
+    want = ((sf + 1.0) / 2.0 + (si - 0.5) / 4.0) / 2                 # 노트북 combine과 같은 식
+    v = j.judge(j.prepare(REF), text, prior)
+    assert abs(v.score - want) < 1e-5 and v.judge_ms > 0
+    assert v.hallucinated == (v.score >= 0.3)                         # threshold 미지정이면 조합 기본 임계값
+    assert j.judge(j.prepare(REF), text, prior, threshold=v.score - 1).hallucinated
+    # 하위 판정기의 임계값(99)·간격(end)은 쓰지 않는다. 환경 변수 임계값은 조합에 적용
+    j2 = load_judge(Settings(judge_model_dir=str(d), judge_device='cpu', judge_threshold=7.0))
+    assert j2.threshold_for(8) == 7.0 and j2.threshold_for(0) == 7.0
+
+
+def test_combo_judge_missing_member_fails(tmp_path):
+    from hallugate.judge import load_judge
+    d = _combo_dir(tmp_path)
+    cfg = json.loads((d / 'judge_config.json').read_text()); cfg['members']['I'] = 'nope'
+    (d / 'judge_config.json').write_text(json.dumps(cfg))
+    with pytest.raises(FileNotFoundError):
+        load_judge(Settings(judge_model_dir=str(d), judge_device='cpu'))
+
+
+class _Shift(LexicalJudge):
+    """조합 게이트웨이 테스트용: 대체 판정기 점수에 상수를 더한다 (두 하위 판정기 점수를 다르게)."""
+    def __init__(self, add, **kw):
+        super().__init__(**kw); self.add = add
+
+    def judge(self, ref, text, prior='', threshold=None):
+        v = super().judge(ref, text, prior, threshold)
+        v.score += self.add
+        return v
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['pass', 'hold'])
+async def test_combo_judge_in_gateway(tmp_path, mode):
+    from hallugate.judge import ComboJudge
+    j = ComboJudge([('F', _Shift(0.0), 0.0, 1.0), ('I', _Shift(1.0), 1.0, 2.0)], thresholds={}, threshold=0.25)
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path='', stride_tokenizer='words', collection_db='')
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(s, judge=j, http_client=up)), base_url='http://gw')
+    text, ev, finish = await run(client, body(BAD_2ND, mode))
+    assert text == BAD_2ND and finish == 'stop'                       # 본문 보존
+    vs = [e for k, e in ev if k == 'v']
+    lex = LexicalJudge(); r = lex.prepare(REF)
+    for v in vs:                                                      # 조합 점수 = (s/1 + (s+1−1)/2)/2 = 0.75·s
+        assert abs(v['score'] - 0.75 * lex.judge(r, v['text']).score) < 1e-6
+    assert [v['hallucinated'] for v in vs] == [False, True, False]
+    h = (await client.get('/health')).json()
+    assert h['judge'] == 'ComboJudge' and h['input_mode'] == 'combo' and h['threshold'] == 0.25
+
+
+@pytest.mark.asyncio
+async def test_combo_member_failure_fails_open(tmp_path):
+    from hallugate.judge import ComboJudge
+    bad = LexicalJudge(fail=lambda t: 'rockets' in t)
+    j = ComboJudge([('F', LexicalJudge(), 0.0, 1.0), ('I', bad, 0.0, 1.0)], thresholds={}, threshold=0.5)
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path='', stride_tokenizer='words', collection_db='')
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(s, judge=j, http_client=up)), base_url='http://gw')
+    text, ev, _ = await run(client, body(BAD_2ND, 'hold'))
+    assert text == BAD_2ND                                            # 하위 판정기 하나가 실패해도 본문은 그대로
+    assert any(e.get('verified') is False and e.get('reason') == 'judge_error' for k, e in ev if k == 'v')
+
+
+def test_combo_config_v1_matches_analysis():
+    # 저장소의 배포 조합 설정이 실험 결과 파일(I3 표준화 상수, K2 서비스 임계값 B)과 같은지
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = json.load(open(os.path.join(root, 'configs', 'judge_combo_v1.json')))
+    i3 = json.load(open(os.path.join(root, 'docs', 'analysis', 'i3', 'i3_summary.json')))['standardize']
+    k2 = json.load(open(os.path.join(root, 'docs', 'analysis', 'k2', 'k2b', 'k2_summary.json')))['thr']['old']
+    assert cfg['type'] == 'combo' and set(cfg['members']) == set(cfg['standardize']) == {'F', 'I'}
+    assert cfg['standardize']['F'] == i3['Fb'] and cfg['standardize']['I'] == i3['I2']
+    assert cfg['thresholds']['8'] == {'svcB': k2['B'], 'svc10_orig': k2['A']} and cfg['threshold'] == k2['B']
+    assert cfg['default'] == {'kind': '8', 'threshold': 'svcB'}
