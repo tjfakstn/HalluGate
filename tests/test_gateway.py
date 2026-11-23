@@ -1023,6 +1023,10 @@ def test_keys_cli(tmp_path, capsys):
     assert KeyStore(db).verify(key) is None
     from hallugate.store import SQLiteStore
     assert [c['collection'] for c in SQLiteStore(cdb, None).collections()] == ['other/kb']     # 그 사용자 것만 지움
+    from hallugate.metrics import MetricsStore
+    MetricsStore(db).add({'key_id': kid, 'status': 200}); MetricsStore(db).add({'key_id': 'zz', 'status': 200})
+    cli.main(['--db', db, '--collections', cdb, 'revoke', kid, '--purge'])
+    assert [r['key_id'] for r in MetricsStore(db).rows(0)] == ['zz']                         # 기록도 그 사용자 것만 지움
 
 
 # ---------------- 운영 모드: 업스트림 허용 목록·사용량 제한 (SPEC §10.3·10.4, H3·H4) ----------------
@@ -1113,3 +1117,79 @@ async def test_hosted_post_check_daily_quota(tmp_path):
     assert len(fc.calls) == 3                                          # 한도를 넘으면 Claude를 부르지 않음
     kid = ks.list()[0]['key_id']
     assert KeyStore(s.keys_db).post_checks_today(kid) == 1             # 컨테이너가 다시 떠도 유지
+
+
+# ---------------- 운영 모드: 원문 없는 기록·관리자 통계 (SPEC §10.5·10.6, H5·H7) ----------------
+def _rows(path):
+    import sqlite3
+    return [json.loads(r[0]) for r in sqlite3.connect(path).execute('SELECT data FROM requests ORDER BY ts')]
+
+
+@pytest.mark.asyncio
+async def test_hosted_records_have_no_raw_text(tmp_path, capsys):
+    from hallugate.postcheck import ClaudePostChecker
+    client, s, st, ks, sent = _hosted_gw(tmp_path, post_checker=ClaudePostChecker(client=FakeClaude(rocket_labels)))
+    _, k = ks.create('alice')
+    c = _hc(client, k, Authorization='Bearer user-llm-key-123')
+    QUESTION = 'Which secret question zebra?'
+    b = _pc_body(); b['messages'][0]['content'] = QUESTION
+    _, out = await run_chunks(c, b)                                        # 스트리밍 + 2단
+    assert _post(out)[0]['flagged']
+    await c.post('/v1/chat/completions', json=body(BAD_2ND, 'hold', stream=False))          # 비스트리밍
+    await c.post('/v1/collections/kb/documents', json={'text': DOC_A, 'doc_id': 'a'})
+    await run(c, rag_body(BAD_2ND))                                        # 컬렉션
+    await client.post('/v1/chat/completions', json=b)                      # 401 (키 없음)
+    off = body(GOOD, 'off'); await c.post('/v1/chat/completions', json=off)   # 검증 끔 → 그대로 통과도 기록
+    rows = _rows(s.keys_db)
+    assert [r['status'] for r in rows] == [200, 200, 200, 401, 200]
+    assert rows[0]['stream'] and rows[0]['post_check']['flagged'] and rows[0]['n_flagged'] == 1 and rows[0]['n_sentences'] == 3
+    assert rows[2]['collection_used'] and rows[2]['n_evidence'] >= 1 and rows[3]['key_id'] == ''
+    dump = json.dumps(rows) + capsys.readouterr().out
+    for secret in ['rockets', 'founded in 1998', 'zebra', 'Penguins', 'user-llm-key-123', k, k.split('_', 2)[2],
+                   'not in reference', 'flew rockets', 'Be brief']:
+        assert secret not in dump, secret                                 # 원문·키가 기록에 없음
+    assert dump.count('"key_id"') >= 2 and not os.path.exists(s.metrics_path)   # 운영 모드는 JSONL을 쓰지 않음
+
+
+def test_metrics_store_retention_and_purge(tmp_path):
+    import time as _t
+    from hallugate.metrics import MetricsStore
+    m = MetricsStore(str(tmp_path / 'k.sqlite3'))
+    m.add({'key_id': 'a', 'status': 200}, ts=_t.time() - 40 * 86400)
+    m.add({'key_id': 'a', 'status': 200}); m.add({'key_id': 'b', 'status': 200})
+    assert m.prune(30) == 1 and len(m.rows(0)) == 2
+    assert m.purge('a') == 1 and [r['key_id'] for r in m.rows(0)] == ['b']
+
+
+@pytest.mark.asyncio
+async def test_admin_stats(tmp_path):
+    from hallugate.postcheck import ClaudePostChecker
+    client, s, st, ks, sent = _hosted_gw(tmp_path, rate_rpm=3, post_checker=ClaudePostChecker(client=FakeClaude(rocket_labels)))
+    _, ka = ks.create('alice'); kid = ks.list()[0]['key_id']
+    a = _hc(client, ka)
+    await run_chunks(a, _pc_body())
+    await a.post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    await a.post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    assert (await a.post('/v1/chat/completions', json=body(GOOD, 'hold'))).status_code == 429
+    await client.post('/v1/chat/completions', json=body(GOOD, 'hold'))     # 401
+    assert (await client.get('/admin/stats')).status_code == 401
+    assert (await client.get('/admin/stats', headers={'Authorization': 'Bearer nope'})).status_code == 401
+    assert (await client.get('/admin/stats?window=abc', headers={'Authorization': 'Bearer adm'})).status_code == 400
+    r = await client.get('/admin/stats?window=24h', headers={'Authorization': 'Bearer adm'})
+    st_ = r.json()
+    assert st_['window'] == '24h' and st_['requests']['total'] == 5
+    assert st_['requests']['by_status'] == {'200': 3, '401': 1, '429': 1} and st_['rate_limited'] == 1
+    assert st_['requests']['by_key'][kid] == 4 and st_['requests']['by_upstream']['openai'] == 4
+    for k_ in ['ttft_ms', 'total_ms']:
+        assert st_['latency'][k_]['p50'] is not None and st_['latency'][k_]['p95'] >= st_['latency'][k_]['p50']
+    assert st_['latency']['judge_ms_p95'] is not None
+    assert st_['unverified']['rate'] == 0.0 and st_['post_check']['runs'] == 1 and st_['post_check']['flagged'] == 1
+    assert st_['post_check']['est_cost_usd'] > 0 and st_['cold_starts'] == []
+    rows = _rows(s.keys_db)
+    assert rows[0]['cold'] is True and all(not x.get('cold') for x in rows[1:])    # 컨테이너 시작 직후 첫 요청만 콜드
+    m = client._transport.app if hasattr(client._transport, 'app') else None
+    from hallugate.metrics import MetricsStore
+    MetricsStore(s.keys_db).add_start(1234.5)
+    r = await client.get('/admin/stats?window=30m', headers={'Authorization': 'Bearer adm'})
+    cs = r.json()['cold_starts']
+    assert len(cs) == 1 and cs[0]['warmup_ms'] == 1234.5

@@ -63,6 +63,10 @@ class RequestRecord:
     post_check: dict = None            # 응답 끝 2단 검증 결과 (SPEC §5.3)
     tenant: str = ''                   # 운영 모드 키 ID (SPEC §10)
     upstream: str = ''                 # 운영 모드 업스트림 이름 (SPEC §10.3)
+    ref_chars: int = 0                 # 근거 글자 수 (원문 대신 길이만 기록, SPEC §10.5)
+    status: int = 200
+    stream: bool = True
+    cold: bool = False                 # 컨테이너 시작 직후 첫 요청 (SPEC §10.6)
 
     def now(self):
         return (time.perf_counter() - self.t0) * 1000

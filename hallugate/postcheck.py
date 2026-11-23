@@ -58,6 +58,8 @@ class PostCheckResult:
     threshold: float = 0.0
     flagged: bool = False
     check_ms: float = 0.0
+    in_tokens: int = 0
+    out_tokens: int = 0
     sentences: list = field(default_factory=list)
 
     def to_dict(self):
@@ -88,16 +90,21 @@ class ClaudePostChecker:
 
     async def _one(self, p):
         m = await self.client.messages.create(**p)
-        return ''.join(getattr(b, 'text', '') for b in m.content if getattr(b, 'type', '') == 'text')
+        u = getattr(m, 'usage', None)
+        text = ''.join(getattr(b, 'text', '') for b in m.content if getattr(b, 'type', '') == 'text')
+        return text, getattr(u, 'input_tokens', 0) or 0, getattr(u, 'output_tokens', 0) or 0
 
     async def check(self, reference, sents):
         """sents: [(sentence_idx, start, 문장 텍스트)] — 1단과 같은 문장 분할.
         모든 호출이 예외면 그 예외를 올린다(호출한 쪽이 fail-open으로 처리)."""
         t0 = time.perf_counter()
         p = self.params(reference, [t for _, _, t in sents])
-        outs = await asyncio.gather(*[self._one(p) for _ in range(self.votes)], return_exceptions=True)
-        if all(isinstance(o, BaseException) for o in outs):
-            raise outs[0]
+        got = await asyncio.gather(*[self._one(p) for _ in range(self.votes)], return_exceptions=True)
+        if all(isinstance(o, BaseException) for o in got):
+            raise got[0]
+        ok_calls = [o for o in got if not isinstance(o, BaseException)]
+        tok_in, tok_out = sum(o[1] for o in ok_calls), sum(o[2] for o in ok_calls)   # 비용 추정용 (SPEC §10.6)
+        outs = [o if isinstance(o, BaseException) else o[0] for o in got]
         n = len(sents)
         valid = [labs for labs, ok in (parse(o, n) if isinstance(o, str) else ({}, False) for o in outs) if ok]
         if not valid:
@@ -112,4 +119,4 @@ class ClaudePostChecker:
                 row.update(phrase=hv[0]['phrase'], reason=hv[0]['reason'])
             rows.append(row)
         return PostCheckResult(True, '', self.model, self.votes, len(valid), score, self.threshold,
-                               score >= self.threshold, (time.perf_counter() - t0) * 1000, rows)
+                               score >= self.threshold, (time.perf_counter() - t0) * 1000, tok_in, tok_out, rows)

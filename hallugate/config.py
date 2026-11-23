@@ -73,6 +73,7 @@ class Settings:
     max_concurrent: int = field(default_factory=lambda: _env('MAX_CONCURRENT', 4, int))
     post_check_daily: int = field(default_factory=lambda: _env('POST_CHECK_DAILY', 50, int))
     max_ref_chars: int = field(default_factory=lambda: _env('MAX_REF_CHARS', 50000, int))
+    metrics_retention_days: int = field(default_factory=lambda: _env('METRICS_RETENTION_DAYS', 30, int))
     max_doc_chars: int = field(default_factory=lambda: _env('MAX_DOC_CHARS', 200000, int))
 
     # 데모 화면 GET /demo (SPEC §2.8). 0이면 끈다

@@ -4,7 +4,7 @@
   python scripts/keys.py --db ... list
   python scripts/keys.py --db ... --collections /data/collections.sqlite3 revoke <키 ID> [--purge]
 
---purge: 그 사용자의 컬렉션(문서·조각)을 모두 지운다. 측정 기록 삭제는 SPEC §10.5(4단계)에서 함께 처리한다.
+--purge: 그 사용자의 컬렉션(문서·조각)과 측정 기록을 모두 지운다 (SPEC §10.5).
 """
 import argparse
 import datetime
@@ -43,6 +43,8 @@ def main(argv=None):
             st = SQLiteStore(a.collections, None)
             print(f'컬렉션 문서 {st.purge(a.key_id + "/")}개 삭제')
             st.close()
+            from hallugate.metrics import MetricsStore
+            print(f'측정 기록 {MetricsStore(a.db).purge(a.key_id)}줄 삭제')
     ks.close()
 
 

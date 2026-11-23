@@ -25,6 +25,7 @@ from . import context as ctxmod
 from .config import Settings
 from .pipeline import RequestRecord, VerifyPipeline, is_english
 from .limits import Limiter
+from .metrics import MetricsStore, parse_window, rejected, summarize
 from .postcheck import skipped
 from .splitter import IncrementalSplitter
 from .tokens import make_tokens
@@ -113,7 +114,8 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         post_checker = ClaudePostChecker(api_key=settings.anthropic_api_key, model=settings.post_check_model,
                                          votes=settings.post_check_votes, threshold=settings.post_check_threshold)
     state = {'judge': judge, 'client': http_client, 'store': store, 'post_checker': post_checker, 'keys': keys,
-             'limiter': limiter or Limiter()}
+             'limiter': limiter or Limiter(), 'cold': True,
+             'metrics': MetricsStore(settings.keys_db) if settings.hosted else None}   # 운영 모드 기록 (SPEC §10.5)
     allow_up = dict(x.split('=', 1) for x in settings.upstream_allowlist.split(',') if '=' in x)   # SPEC §10.3
     tokens = make_tokens(settings.stride_tokenizer)
 
@@ -126,9 +128,13 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             from .judge import load_judge
             state['judge'] = load_judge(settings)
         # 예열: 첫 요청에서 GPU 커널 준비로 판정이 수백 ms 걸리는 것을 막는다 (S3 측정에서 첫 요청 468ms 관측)
+        t_w = time.perf_counter()
         warm = state['judge'].prepare('warm up reference text ' * 40)
         for _ in range(3):
             state['judge'].judge(warm, 'This is a warm up sentence.')
+        if state['metrics'] is not None:                 # 콜드 스타트 관측·보관 기간 정리 (SPEC §10.5·10.6)
+            state['metrics'].add_start((time.perf_counter() - t_w) * 1000)
+            state['metrics'].prune(settings.metrics_retention_days)
         if state['store'] is None and settings.collection_db:
             from .store import SQLiteStore
             emb = None if settings.collection_embedder else getattr(state['judge'], 'embedder', None)
@@ -146,7 +152,15 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
 
     app = FastAPI(title='hallugate', lifespan=lifespan)
 
+    def _emit(row):
+        # 운영 모드: 원문 없는 요약을 SQLite와 표준 출력에 (SPEC §10.5)
+        state['metrics'].add(row)
+        print(json.dumps({'event': 'request', **row}, ensure_ascii=False), flush=True)
+
     def _log(rec):
+        if settings.hosted:
+            _emit(summarize(rec.to_dict(), rec.status, rec.stream, rec.cold))
+            return
         if settings.metrics_path:
             with open(settings.metrics_path, 'a') as f:
                 f.write(json.dumps(rec.to_dict(), ensure_ascii=False) + '\n')
@@ -263,6 +277,21 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             return _err(f'document {doc_id} not found in {cid}', 404, 'not_found_error')
         return {'deleted': True, 'collection': cid, 'doc_id': doc_id}
 
+    @app.get('/admin/stats', include_in_schema=False)
+    async def admin_stats(request: Request, window: str = '24h'):
+        # 관리자 통계 (SPEC §10.6). 운영 모드에서만, ADMIN_TOKEN 필요
+        if not settings.hosted:
+            return _err('admin stats are available only in hosted mode', 404, 'not_found_error')
+        if not settings.admin_token or request.headers.get('authorization') != f'Bearer {settings.admin_token}':
+            return _err('invalid or missing admin token', 401, 'authentication_error')
+        try:
+            w = parse_window(window)
+        except ValueError as ex:
+            return _err(str(ex))
+        m = state['metrics']
+        await asyncio.to_thread(m.prune, settings.metrics_retention_days)
+        return await asyncio.to_thread(m.stats, w, window)
+
     def _lim(t, name, default):
         return int((t.limits or {}).get(name, default))
 
@@ -270,9 +299,17 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
     async def chat(request: Request):
         tenant, e = _tenant(request)
         if e:
+            if settings.hosted:
+                _emit(rejected('', e.status_code))
             return e
         if tenant is None:
             return await _chat(request, None)
+        resp = await _limited_chat(request, tenant)
+        if not isinstance(resp, StreamingResponse) and not getattr(request.state, 'hg_logged', False):
+            _emit(rejected(tenant.key_id, resp.status_code, request.headers.get('x-upstream', 'openai')))
+        return resp
+
+    async def _limited_chat(request, tenant):
         # 운영 모드 한도 (SPEC §10.4): 분당 → 동시. 거절된 요청은 업스트림을 부르지 않는다
         lim = state['limiter']
         ra = lim.hit(tenant.key_id, _lim(tenant, 'rpm', settings.rate_rpm))
@@ -343,7 +380,8 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         headers = _headers(request)
         rec = RequestRecord(mode=mode, action=action, stride=stride, tag=request.headers.get('x-request-tag', ''),
                             collection=coll or '', retrieve_ms=retrieve_ms if coll else 0.0,
-                            n_evidence=len(evidence or []), tenant=tenant.key_id if tenant else '', upstream=up_name)
+                            n_evidence=len(evidence or []), tenant=tenant.key_id if tenant else '', upstream=up_name,
+                            ref_chars=len(ref or ''), stream=bool(body.get('stream')), cold=state.pop('cold', False))
         thr = judge.threshold_for(stride)
         pc_on = bool(opts.get('post_check', settings.post_check_default)) and mode != 'off'
         vh = {'x-verification-mode': mode, 'x-verification-action': action, 'x-verification-stride': str(stride),
@@ -361,6 +399,10 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         if not body.get('stream'):
             r = await client.post(url, json=body, headers=headers)
             if r.status_code != 200 or mode == 'off':
+                if r.status_code == 200:                 # 검증을 끈 요청도 기록 (오류는 바깥에서 상태 코드로 기록)
+                    rec.t_client_done = rec.now()
+                    _log(rec)
+                    request.state.hg_logged = True
                 return Response(r.content, status_code=r.status_code, media_type='application/json', headers=vh)
             data = r.json()
             content = data['choices'][0]['message'].get('content') or ''
@@ -409,6 +451,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                                                                        settings.post_check_timeout_ms, pc_allow)
             rec.t_client_done = rec.now()
             _log(rec)
+            request.state.hg_logged = True
             return JSONResponse(data, headers=vh)
 
         # ---------- 스트리밍 ----------
@@ -426,6 +469,8 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                         yield chunk
                 finally:
                     await resp.aclose()
+                    rec.t_client_done = rec.now()
+                    _log(rec)
             return StreamingResponse(passthrough(), media_type='text/event-stream', headers=vh)
 
         async def gen():
