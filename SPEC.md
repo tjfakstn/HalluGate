@@ -362,7 +362,9 @@ J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐*
 - 모든 `/v1/*` 요청은 헤더 **`x-hallugate-key: hg_<키 ID>_<비밀>`**이 있어야 한다. 없거나 틀리거나 폐기된 키 → 401 `authentication_error`. `Authorization` 헤더는 쓰지 않는다(사용자의 LLM 키를 담아 업스트림에 넘기는 용도, §10.3)
   - OpenAI SDK: `OpenAI(base_url=..., api_key=<LLM 키>, default_headers={"x-hallugate-key": "hg_..."})`
 - 키는 **해시(SHA-256)만** 저장한다(`KEYS_DB`, SQLite): 키 ID, 해시, 이름(사용자 메모), 만든 시각, 폐기 시각, 한도(§10.4). 비밀 원문은 발급할 때 한 번만 보여 준다
-- 발급·조회·폐기는 관리자 스크립트로만 한다: `python scripts/keys.py create --name ...` / `list` / `revoke <키 ID>`. 셀프 가입 없음
+- 발급·조회·폐기는 관리자만 한다(셀프 가입 없음). 두 경로가 같은 동작을 한다:
+  - **관리자 API** (`ADMIN_TOKEN`): `POST /admin/keys` `{"name", "limits"?}` → `{"key_id", "key"}`(전체 키는 이때만), `GET /admin/keys`(해시 없이 목록), `POST /admin/keys/{키 ID}/revoke` `{"purge"?: true}`(→ `{"revoked", "purged_docs", "purged_records"}`). 배포 환경(Modal)에서는 실행 중인 게이트웨이가 저장소 파일을 열고 있으므로 **이 경로를 쓴다**(다른 컨테이너에서 파일을 직접 고치면 실행 중인 게이트웨이에 바로 반영되지 않음)
+  - **관리자 스크립트** `scripts/keys.py`: `--url <게이트웨이 주소>`(관리자 토큰은 `ADMIN_TOKEN` 환경 변수)를 주면 위 관리자 API를 부르고, `--db <파일>`이면 로컬 저장소를 직접 고친다(셀프호스팅·테스트용). 명령: `create --name ... [--limits JSON]` / `list` / `revoke <키 ID> [--purge]`
 - `/demo`(§2.8): 운영 모드에서는 화면에서 게이트웨이 키·LLM 키·업스트림을 입력받아 요청 헤더로 보낸다. 키는 그 브라우저 탭의 저장소(sessionStorage)에만 두고 서버에 저장하지 않는다. 가짜 LLM은 배포하지 않으므로 실제 업스트림으로만 동작한다
 - `/health`는 인증 없이 열지만 운영 모드에서는 `{"ok": true}`와 버전만 준다(판정기 내부 값 숨김). `/admin/*`는 `ADMIN_TOKEN`(`Authorization: Bearer`)이 있어야 한다
 
@@ -401,13 +403,16 @@ J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐*
 ### 10.6 관측 — `GET /admin/stats` (`ADMIN_TOKEN`) ✅
 기간(`window`, 기본 24h) 동안: 요청 수(사용자별·업스트림별), 상태 코드별 수, 첫 글자 지연·전체 시간 p50/p95, 판정 시간 p95, 검증 중단 비율(이유별), 2단 검증 수와 추정 비용(2단 응답의 토큰 사용량 × 실시간 단가표 — 배치 단가(SSOT)의 2배로 추정), 429 수, **콜드 스타트**(컨테이너 시작 시각·예열 시간·시작 직후 첫 요청의 첫 글자 지연). `window`는 `30m`·`24h`·`7d` 형식. 컨테이너 시작은 `starts` 표에 남긴다.
 
-### 10.7 배포 — Modal (서버리스 GPU)
+### 10.7 배포 — Modal (서버리스 GPU) 🚧
 - 게이트웨이 전체(FastAPI + 조합 판정기)를 **GPU 컨테이너 하나**에 올린다(`deploy/modal_app.py`). 판정기를 따로 떼면 8토큰마다 네트워크 왕복이 생겨 실시간 조건(§4, A6)을 맞추기 어렵기 때문이다
 - 컨테이너 **최소 0대·최대 1대**(SQLite 쓰기 하나, 메모리 한도 계산), 요청이 없으면 `SCALEDOWN_SECONDS`(기본 300초) 뒤 내려간다. 시연 날처럼 필요하면 최소 1대로 바꿔 콜드 스타트를 없앤다
 - 저장: Modal Volume `/data`(키·컬렉션·사용량·측정 기록 SQLite), `/models`(판정기 가중치, 저장소에 넣지 않음). 비밀 값: Modal Secret(`ADMIN_TOKEN`, 2단 검증용 `ANTHROPIC_API_KEY`)
 - 컨테이너가 뜨면 판정기를 불러 예열하고(§4) 예열 시간을 기록한다
-- 배포는 `modal deploy deploy/modal_app.py`(수동). GitHub Actions 자동 배포는 저장소 CI가 동작할 때 붙인다
-- 운영 문서 `docs/OPERATIONS.md`: 배포, 키 발급·폐기, 한도 변경, 통계 보기, 장애 대응(판정기 오류·업스트림 장애·콜드 스타트·비용 급증), 비용 확인
+- 배포는 `modal deploy deploy/modal_app.py`(수동, 저장소 루트에서). GitHub Actions 자동 배포는 저장소 CI가 동작할 때 붙인다
+- Volume은 둘로 나눈다: `hallugate-data`(`/data`, 키·컬렉션·기록 SQLite)와 `hallugate-models`(`/models`, 판정기 폴더 `/models/judge_combo` + 임베더·토크나이저 캐시). SQLite는 컨테이너 1대만 쓰므로 쓰는 곳이 하나다. Volume은 몇 초마다, 그리고 컨테이너가 내려갈 때 저장된다
+- 컨테이너 안 설정: `HOSTED=1`, `KEYS_DB=/data/hallugate.sqlite3`, `COLLECTION_DB=/data/collections.sqlite3`, `JUDGE_MODEL_DIR=/models/judge_combo`, `METRICS_PATH=`(JSONL 끔). 배포 때 바꿀 값: GPU 종류 `HG_GPU`(기본 `L4`), 최소 컨테이너 수 `HG_MIN_CONTAINERS`(기본 0, 시연 날 1), `SCALEDOWN_SECONDS`
+- 플랫폼 자체 한도: 함수당 초당 200요청(넘으면 429, Modal 문서)
+- 운영 문서 `docs/OPERATIONS.md` ✅: 처음 준비(계정·가중치·비밀 값), 배포·되돌리기, 키 발급·폐기, 관측, 장애 대응(판정기 오류·업스트림 장애·콜드 스타트·비용 급증·키 유출), 백업, 비용
 
 ### 10.8 운영 설정 (환경 변수)
 

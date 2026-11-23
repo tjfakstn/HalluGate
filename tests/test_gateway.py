@@ -1193,3 +1193,50 @@ async def test_admin_stats(tmp_path):
     r = await client.get('/admin/stats?window=30m', headers={'Authorization': 'Bearer adm'})
     cs = r.json()['cold_starts']
     assert len(cs) == 1 and cs[0]['warmup_ms'] == 1234.5
+
+
+# ---------------- 운영 모드: 관리자 키 API (SPEC §10.1) ----------------
+@pytest.mark.asyncio
+async def test_admin_keys_api(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    A = {'Authorization': 'Bearer adm'}
+    assert (await client.post('/admin/keys', json={'name': 'x'})).status_code == 401
+    assert (await client.post('/admin/keys', json={'name': 'x'}, headers={'Authorization': 'Bearer no'})).status_code == 401
+    r = (await client.post('/admin/keys', json={'name': 'alice', 'limits': {'rpm': 5}}, headers=A)).json()
+    kid, key = r['key_id'], r['key']
+    assert key.startswith(f'hg_{kid}_') and ks.verify(key).limits == {'rpm': 5}
+    lst = (await client.get('/admin/keys', headers=A)).json()['data']
+    assert [x['key_id'] for x in lst] == [kid] and 'hash' not in lst[0] and key not in json.dumps(lst)
+    assert (await client.post('/admin/keys', json={'limits': 'bad'}, headers=A)).status_code == 400
+    # 발급한 키로 바로 사용 → 폐기(+purge) → 401, 문서·기록 삭제
+    c = _hc(client, key)
+    await c.post('/v1/collections/kb/documents', json={'text': DOC_A})
+    assert (await c.post('/v1/chat/completions', json=body(GOOD, 'hold'))).status_code == 200
+    r = (await client.post(f'/admin/keys/{kid}/revoke', json={'purge': True}, headers=A)).json()
+    assert r['revoked'] and r['purged_docs'] == 1 and r['purged_records'] >= 1
+    assert (await c.post('/v1/chat/completions', json=body(GOOD, 'hold'))).status_code == 401
+    assert (await client.post('/admin/keys/nope/revoke', json={}, headers=A)).json()['revoked'] is False
+
+
+def test_keys_cli_remote(tmp_path, capsys, monkeypatch):
+    # scripts/keys.py --url: 관리자 API 호출 (ASGI 앱에 바로 연결)
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location('keys_cli2', os.path.join(root, 'scripts', 'keys.py'))
+    cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    monkeypatch.setenv('ADMIN_TOKEN', 'adm')
+
+    class Bridge(httpx.BaseTransport):                                  # 동기 httpx → 비동기 ASGI 앱
+        def handle_request(self, request):
+            async def go():
+                r = await client._transport.handle_async_request(request)
+                body_ = b''.join([c async for c in r.stream])
+                return httpx.Response(r.status_code, headers=r.headers, content=body_)
+            return asyncio.new_event_loop().run_until_complete(go())
+    monkeypatch.setattr(cli, 'TRANSPORT', Bridge())
+    cli.main(['--url', 'http://gw', 'create', '--name', 'bob', '--limits', '{"rpm": 3}'])
+    key = next(w for w in capsys.readouterr().out.split() if w.startswith('hg_'))
+    t = ks.verify(key); assert t.name == 'bob' and t.limits == {'rpm': 3}
+    cli.main(['--url', 'http://gw', 'list']); assert t.key_id in capsys.readouterr().out
+    cli.main(['--url', 'http://gw', 'revoke', t.key_id, '--purge']); assert ks.verify(key) is None

@@ -277,13 +277,48 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             return _err(f'document {doc_id} not found in {cid}', 404, 'not_found_error')
         return {'deleted': True, 'collection': cid, 'doc_id': doc_id}
 
-    @app.get('/admin/stats', include_in_schema=False)
-    async def admin_stats(request: Request, window: str = '24h'):
-        # 관리자 통계 (SPEC §10.6). 운영 모드에서만, ADMIN_TOKEN 필요
+    def _admin_only(request):
+        # 관리자 API (SPEC §10.1·10.6): 운영 모드에서만, ADMIN_TOKEN 필요
         if not settings.hosted:
-            return _err('admin stats are available only in hosted mode', 404, 'not_found_error')
+            return _err('admin API is available only in hosted mode', 404, 'not_found_error')
         if not settings.admin_token or request.headers.get('authorization') != f'Bearer {settings.admin_token}':
             return _err('invalid or missing admin token', 401, 'authentication_error')
+        return None
+
+    @app.post('/admin/keys', include_in_schema=False)
+    async def admin_create_key(request: Request):
+        if (e := _admin_only(request)):
+            return e
+        b = await request.json() if await request.body() else {}
+        limits = b.get('limits') or {}
+        if not isinstance(limits, dict) or not all(k in ('rpm', 'concurrent', 'post_check_daily') and isinstance(v, int)
+                                                   for k, v in limits.items()):
+            return _err('limits must be an object with integer rpm / concurrent / post_check_daily')
+        kid, key = await asyncio.to_thread(state['keys'].create, str(b.get('name', '')), limits)
+        return {'key_id': kid, 'key': key}
+
+    @app.get('/admin/keys', include_in_schema=False)
+    async def admin_list_keys(request: Request):
+        if (e := _admin_only(request)):
+            return e
+        return {'object': 'list', 'data': await asyncio.to_thread(state['keys'].list)}
+
+    @app.post('/admin/keys/{key_id}/revoke', include_in_schema=False)
+    async def admin_revoke_key(key_id: str, request: Request):
+        if (e := _admin_only(request)):
+            return e
+        b = await request.json() if await request.body() else {}
+        out = {'key_id': key_id, 'revoked': await asyncio.to_thread(state['keys'].revoke, key_id)}
+        if b.get('purge'):                               # 그 사용자의 컬렉션·기록 삭제 (SPEC §10.5)
+            out['purged_docs'] = (await asyncio.to_thread(state['store'].purge, key_id + '/')) if state['store'] else 0
+            out['purged_records'] = await asyncio.to_thread(state['metrics'].purge, key_id)
+        return out
+
+    @app.get('/admin/stats', include_in_schema=False)
+    async def admin_stats(request: Request, window: str = '24h'):
+        # 관리자 통계 (SPEC §10.6)
+        if (e := _admin_only(request)):
+            return e
         try:
             w = parse_window(window)
         except ValueError as ex:

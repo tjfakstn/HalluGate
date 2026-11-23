@@ -17,3 +17,7 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 *.sqlite3
+
+# 운영(Modal) — 판정기 폴더와 데이터 백업은 커밋하지 않는다 (docs/OPERATIONS.md)
+judge_combo/
+backup/
