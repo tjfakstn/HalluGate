@@ -925,13 +925,16 @@ def _hosted_gw(tmp_path, **kw):
     sent = []
 
     async def hook(req):
-        sent.append(json.loads(req.content))
+        sent.append({**json.loads(req.content), '_host': req.url.host, '_auth': req.headers.get('authorization')})
     up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock',
                            event_hooks={'request': [hook]})
+    limiter, checker = kw.pop('limiter', None), kw.pop('post_checker', None)
+    kw.setdefault('upstream_allowlist', 'openai=http://up-openai/v1,anthropic=http://up-anth/v1')
     s = Settings(upstream_base_url='http://mock/v1', metrics_path=str(tmp_path / 'm.jsonl'), stride_tokenizer='words',
                  collection_top_k=2, hosted=True, keys_db=str(tmp_path / 'k.sqlite3'), admin_token='adm', **kw)
     ks, st = KeyStore(s.keys_db), _store(tmp_path)
-    app = create_app(s, judge=CapJudge(threshold=0.5), http_client=up, store=st, keys=ks)
+    app = create_app(s, judge=CapJudge(threshold=0.5), http_client=up, store=st, keys=ks, limiter=limiter,
+                     post_checker=checker)
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://gw'), s, st, ks, sent
 
 
@@ -1020,3 +1023,93 @@ def test_keys_cli(tmp_path, capsys):
     assert KeyStore(db).verify(key) is None
     from hallugate.store import SQLiteStore
     assert [c['collection'] for c in SQLiteStore(cdb, None).collections()] == ['other/kb']     # 그 사용자 것만 지움
+
+
+# ---------------- 운영 모드: 업스트림 허용 목록·사용량 제한 (SPEC §10.3·10.4, H3·H4) ----------------
+def _hc(client, key, **h):
+    return client.__class__(transport=client._transport, base_url='http://gw', headers={**_K(key), **h})
+
+
+@pytest.mark.asyncio
+async def test_hosted_upstream_allowlist(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path, upstream_api_key='SERVER-KEY')
+    _, k = ks.create('alice')
+    c = _hc(client, k, Authorization='Bearer user-llm-key')
+    r = await c.post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    assert r.status_code == 200 and r.headers['x-upstream'] == 'openai'
+    assert sent[-1]['_host'] == 'up-openai' and sent[-1]['_auth'] == 'Bearer user-llm-key'   # 운영자 키 아님
+    r = await _hc(client, k, Authorization='Bearer a', **{'x-upstream': 'anthropic'}).post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    assert r.status_code == 200 and r.headers['x-upstream'] == 'anthropic' and sent[-1]['_host'] == 'up-anth'
+    n = len(sent)
+    for bad in ['http://evil.example/v1', 'OPENAI ', 'mock']:
+        r = await _hc(client, k, **{'x-upstream': bad}).post('/v1/chat/completions', json=body(GOOD, 'hold'))
+        assert r.status_code == 400, bad
+    assert len(sent) == n                                              # 임의 주소는 부르지 않음
+    await _hc(client, k).post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    assert sent[-1]['_auth'] is None                                    # 사용자 키가 없어도 운영자 키를 넣지 않음
+
+
+def test_limiter_window_and_concurrency():
+    from hallugate.limits import Limiter
+    now = [1000.0]
+    L = Limiter(now=lambda: now[0])
+    assert L.hit('a', 2) is None and L.hit('a', 2) is None
+    ra = L.hit('a', 2)
+    assert ra is not None and 59 <= ra <= 60 and L.hit('b', 2) is None     # 다른 키는 따로
+    now[0] += 30; assert L.hit('a', 2) is not None                      # 거절은 세지 않음, 창 안이면 계속 거절
+    now[0] += 31; assert L.hit('a', 2) is None                          # 60초 지나면 다시 허용
+    assert L.acquire('a', 1) and not L.acquire('a', 1) and L.acquire('b', 1)
+    L.release('a'); assert L.acquire('a', 1)
+
+
+@pytest.mark.asyncio
+async def test_hosted_rate_limit(tmp_path):
+    from hallugate.limits import Limiter
+    now = [0.0]
+    client, s, st, ks, sent = _hosted_gw(tmp_path, rate_rpm=2, limiter=Limiter(now=lambda: now[0]))
+    _, ka = ks.create('alice'); _, kb = ks.create('bob'); _, kc = ks.create('carol', limits={'rpm': 1})
+    a = _hc(client, ka)
+    assert [(await a.post('/v1/chat/completions', json=body(GOOD, 'hold'))).status_code for _ in range(2)] == [200, 200]
+    r = await a.post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    assert r.status_code == 429 and r.json()['error']['type'] == 'rate_limit_error' and int(r.headers['retry-after']) >= 1
+    assert len(sent) == 2                                              # 거절된 요청은 업스트림을 부르지 않음
+    assert (await _hc(client, kb).post('/v1/chat/completions', json=body(GOOD, 'hold'))).status_code == 200
+    c = _hc(client, kc)                                                # 키별 한도가 기본값보다 우선
+    assert [(await c.post('/v1/chat/completions', json=body(GOOD, 'hold'))).status_code for _ in range(2)] == [200, 429]
+    now[0] += 61
+    assert (await a.post('/v1/chat/completions', json=body(GOOD, 'hold'))).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_hosted_concurrency_and_size_limits(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path, max_concurrent=1, max_ref_chars=200)
+    _, k = ks.create('alice')
+    c = _hc(client, k)
+    slow = body(GOOD, 'hold'); slow['mock_token_ms'] = 20
+    r1, r2 = await asyncio.gather(c.post('/v1/chat/completions', json=slow), c.post('/v1/chat/completions', json=slow))
+    assert sorted([r1.status_code, r2.status_code]) == [200, 429]
+    assert (await c.post('/v1/chat/completions', json=body(GOOD, 'hold'))).status_code == 200      # 끝나면 다시 허용
+    assert (await c.post('/v1/chat/completions', json=rag_body(GOOD, coll='missing'))).status_code == 404
+    assert (await c.post('/v1/chat/completions', json=body(GOOD, 'hold', stream=False))).status_code == 200   # 오류 뒤에도 풀림
+    big = body(GOOD, 'hold'); big['verification']['context'] = 'word ' * 50
+    n = len(sent)
+    r = await c.post('/v1/chat/completions', json=big)
+    assert r.status_code == 413 and len(sent) == n
+
+
+@pytest.mark.asyncio
+async def test_hosted_post_check_daily_quota(tmp_path):
+    from hallugate.keys import KeyStore
+    from hallugate.postcheck import ClaudePostChecker
+    fc = FakeClaude(rocket_labels)
+    client, s, st, ks, sent = _hosted_gw(tmp_path, post_check_daily=1, post_checker=ClaudePostChecker(client=fc, votes=3))
+    _, k = ks.create('alice')
+    c = _hc(client, k)
+    _, out = await run_chunks(c, _pc_body())
+    assert _post(out)[0]['verified'] is True and len(fc.calls) == 3
+    _, out = await run_chunks(c, _pc_body())
+    text = ''.join(ch['delta'].get('content') or '' for x in out if x != 'DONE' for ch in x['choices'])
+    assert text == BAD_2ND and _post(out)[0] == {'kind': 'post_check', 'verified': False, 'reason': 'quota'}
+    assert len(fc.calls) == 3                                          # 한도를 넘으면 Claude를 부르지 않음
+    kid = ks.list()[0]['key_id']
+    assert KeyStore(s.keys_db).post_checks_today(kid) == 1             # 컨테이너가 다시 떠도 유지

@@ -65,6 +65,14 @@ class Settings:
     hosted: bool = field(default_factory=lambda: _env('HOSTED', False, lambda v: v.lower() in ('1', 'true', 'yes', 'on')))
     keys_db: str = field(default_factory=lambda: _env('KEYS_DB', '/data/hallugate.sqlite3'))
     max_docs: int = field(default_factory=lambda: _env('MAX_DOCS', 200, int))
+    # 업스트림 허용 목록 (SPEC §10.3): x-upstream 값=주소, 쉼표로 구분. 운영 모드는 이 주소만 호출한다
+    upstream_allowlist: str = field(default_factory=lambda: _env(
+        'UPSTREAM_ALLOWLIST', 'openai=https://api.openai.com/v1,anthropic=https://api.anthropic.com/v1'))
+    # 키별 기본 한도 (SPEC §10.4). 키 생성 때 limits로 바꿀 수 있다
+    rate_rpm: int = field(default_factory=lambda: _env('RATE_RPM', 30, int))
+    max_concurrent: int = field(default_factory=lambda: _env('MAX_CONCURRENT', 4, int))
+    post_check_daily: int = field(default_factory=lambda: _env('POST_CHECK_DAILY', 50, int))
+    max_ref_chars: int = field(default_factory=lambda: _env('MAX_REF_CHARS', 50000, int))
     max_doc_chars: int = field(default_factory=lambda: _env('MAX_DOC_CHARS', 200000, int))
 
     # 데모 화면 GET /demo (SPEC §2.8). 0이면 끈다

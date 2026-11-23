@@ -15,7 +15,13 @@ from dataclasses import dataclass, field
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS api_keys (
     key_id TEXT PRIMARY KEY, hash TEXT NOT NULL, name TEXT, created REAL NOT NULL, revoked REAL, limits TEXT);
+CREATE TABLE IF NOT EXISTS usage_daily (
+    key_id TEXT NOT NULL, day TEXT NOT NULL, post_checks INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (key_id, day));
 '''
+
+
+def _today():
+    return time.strftime('%Y-%m-%d', time.gmtime())
 
 
 @dataclass
@@ -79,6 +85,22 @@ class KeyStore:
             n = self._db.execute('UPDATE api_keys SET revoked=? WHERE key_id=? AND revoked IS NULL',
                                  (time.time(), key_id)).rowcount
         return n > 0
+
+    def post_checks_today(self, key_id):
+        with self._lock:
+            r = self._db.execute('SELECT post_checks FROM usage_daily WHERE key_id=? AND day=?', (key_id, _today())).fetchone()
+        return r[0] if r else 0
+
+    def take_post_check(self, key_id, limit):
+        """오늘(UTC) 2단 검증 수가 limit 미만이면 하나 늘리고 True (SPEC §10.4)."""
+        day = _today()
+        with self._lock, self._db:
+            r = self._db.execute('SELECT post_checks FROM usage_daily WHERE key_id=? AND day=?', (key_id, day)).fetchone()
+            if (r[0] if r else 0) >= limit:
+                return False
+            self._db.execute('INSERT INTO usage_daily (key_id, day, post_checks) VALUES (?,?,1) '
+                             'ON CONFLICT(key_id, day) DO UPDATE SET post_checks = post_checks + 1', (key_id, day))
+        return True
 
     def close(self):
         self._db.close()

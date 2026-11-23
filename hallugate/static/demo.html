@@ -31,7 +31,7 @@ main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 16px
 .card + .card { margin-top: 12px; }
 h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
 label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
-textarea, input[type=text], input[type=number], select {
+textarea, input[type=text], input[type=number], input[type=password], select {
   width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
 textarea { resize: vertical; min-height: 64px; }
 .row { display: flex; gap: 8px; }
@@ -104,7 +104,12 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
       <h2>운영 모드 키</h2>
       <label for="hgkey">게이트웨이 키 (<code>x-hallugate-key</code>)</label>
       <input id="hgkey" type="password" autocomplete="off" placeholder="hg_...">
-      <div class="hint">이 브라우저 탭에만 보관하고 서버에는 저장하지 않습니다.</div>
+      <div class="row">
+        <div><label for="upstream">LLM 제공자 (<code>x-upstream</code>)</label>
+          <select id="upstream"><option value="openai">OpenAI</option><option value="anthropic">Anthropic (Claude)</option></select></div>
+        <div><label for="llmkey">LLM API 키</label><input id="llmkey" type="password" autocomplete="off" placeholder="sk-..."></div>
+      </div>
+      <div class="hint">키는 이 브라우저 탭에만 보관하고 게이트웨이는 저장·기록하지 않습니다. LLM 키는 고른 제공자에게만 전달됩니다.</div>
     </div>
 
     <div class="card">
@@ -195,9 +200,10 @@ function fmtMs(x) { return x == null ? '–' : (x >= 1000 ? (x / 1000).toFixed(2
 function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 function keyHeaders() {
-  const k = $('hgkey').value.trim();
-  try { sessionStorage.setItem('hgkey', k); } catch (e) {}
-  return k ? { 'x-hallugate-key': k } : {};
+  if (!HOSTED) return {};
+  const k = $('hgkey').value.trim(), l = $('llmkey').value.trim(), u = $('upstream').value;
+  try { sessionStorage.setItem('hgkey', k); sessionStorage.setItem('llmkey', l); sessionStorage.setItem('upstream', u); } catch (e) {}
+  return { 'x-upstream': u, ...(k ? { 'x-hallugate-key': k } : {}), ...(l ? { 'Authorization': 'Bearer ' + l } : {}) };
 }
 
 function loadPreset(p) { $('ref').value = REF; $('q').value = p.q; $('mock').value = HOSTED ? '' : p.a; $('source').value = ''; }
@@ -210,8 +216,13 @@ async function init() {
     if (h.hosted) {
       HOSTED = true; $('keycard').hidden = false;
       $('presethint').textContent = '예제는 근거와 질문만 채웁니다. 실제 LLM이 답을 생성합니다.';
-      try { $('hgkey').value = sessionStorage.getItem('hgkey') || ''; } catch (e) {}
+      try {
+        $('hgkey').value = sessionStorage.getItem('hgkey') || ''; $('llmkey').value = sessionStorage.getItem('llmkey') || '';
+        $('upstream').value = sessionStorage.getItem('upstream') || 'openai';
+      } catch (e) {}
+      $('upstream').onchange = () => { if (!$('model').value || /^(gpt|claude)/.test($('model').value)) $('model').value = $('upstream').value === 'anthropic' ? 'claude-sonnet-5-5' : 'gpt-4o-mini'; };
       $('mock').value = ''; $('model').value = '';
+      $('upstream').onchange();
       $('health').innerHTML = '<b>운영 모드</b> · 영어 응답만 검증합니다';
       $('post').disabled = false;
       return;
@@ -335,7 +346,12 @@ async function send() {
   const tick = setInterval(stats, 100);
   try {
     const r = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify(body), signal: ctrl.signal });
-    if (!r.ok) { const t = await r.text(); log('err', `<span class="tag bad">오류 ${r.status}</span>${esc(t.slice(0, 200))}`); return; }
+    if (!r.ok) {
+      const t = await r.text(); let msg = t.slice(0, 200);
+      try { msg = JSON.parse(t).error.message; } catch (e) {}
+      const why = { 401: '키가 없거나 올바르지 않습니다', 413: '근거·문서가 한도보다 깁니다', 429: `사용량 한도를 넘었습니다${r.headers.get('retry-after') ? ` (${r.headers.get('retry-after')}초 뒤 다시 시도)` : ''}` }[r.status];
+      log('err', `<span class="tag bad">오류 ${r.status}</span>${why ? esc(why) + ' — ' : ''}${esc(msg)}`); return;
+    }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
     while (true) {
       const { value, done } = await rd.read(); if (done) break;

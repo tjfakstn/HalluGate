@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from . import context as ctxmod
 from .config import Settings
 from .pipeline import RequestRecord, VerifyPipeline, is_english
+from .limits import Limiter
 from .postcheck import skipped
 from .splitter import IncrementalSplitter
 from .tokens import make_tokens
@@ -74,7 +75,7 @@ async def _prepare(judge, ref, rec):
     return ref_idx
 
 
-async def _post_check(checker, ref, text, rec, cut, timeout_ms):
+async def _post_check(checker, ref, text, rec, cut, timeout_ms, allow=None):
     """응답 끝 2단 검증 (SPEC §5.3). 본문은 바꾸지 않고 결과 dict만 돌려준다. 실패는 verified=False(fail-open)."""
     if cut:
         res = skipped('cut')
@@ -85,6 +86,8 @@ async def _post_check(checker, ref, text, rec, cut, timeout_ms):
         sents = [(s.idx, s.start, s.clean) for s in sp.feed(text) + sp.flush() if s.clean]
         if not sents:
             res = skipped('empty')
+        elif allow is not None and not allow():          # 운영 모드 하루 한도 (SPEC §10.4)
+            res = skipped('quota')
         else:
             try:
                 res = await asyncio.wait_for(checker.check(ref, sents), timeout_ms / 1000)
@@ -100,7 +103,7 @@ def _err(msg, status=400, kind='invalid_request_error'):
     return JSONResponse({'error': {'message': msg, 'type': kind}}, status_code=status)
 
 
-def create_app(settings=None, judge=None, http_client=None, store=None, post_checker=None, keys=None):
+def create_app(settings=None, judge=None, http_client=None, store=None, post_checker=None, keys=None, limiter=None):
     settings = settings or Settings()
     if settings.hosted and keys is None:                  # 운영 모드 API 키 저장소 (SPEC §10.1)
         from .keys import KeyStore
@@ -109,7 +112,9 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         from .postcheck import ClaudePostChecker
         post_checker = ClaudePostChecker(api_key=settings.anthropic_api_key, model=settings.post_check_model,
                                          votes=settings.post_check_votes, threshold=settings.post_check_threshold)
-    state = {'judge': judge, 'client': http_client, 'store': store, 'post_checker': post_checker, 'keys': keys}
+    state = {'judge': judge, 'client': http_client, 'store': store, 'post_checker': post_checker, 'keys': keys,
+             'limiter': limiter or Limiter()}
+    allow_up = dict(x.split('=', 1) for x in settings.upstream_allowlist.split(',') if '=' in x)   # SPEC §10.3
     tokens = make_tokens(settings.stride_tokenizer)
 
     def default_stride():
@@ -148,7 +153,10 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
 
     def _headers(request):
         h = {'Content-Type': 'application/json'}
-        auth = f'Bearer {settings.upstream_api_key}' if settings.upstream_api_key else request.headers.get('authorization')
+        if settings.hosted:                              # 운영 모드: 사용자 LLM 키만, 운영자 키는 절대 안 씀 (SPEC §10.3)
+            auth = request.headers.get('authorization')
+        else:
+            auth = f'Bearer {settings.upstream_api_key}' if settings.upstream_api_key else request.headers.get('authorization')
         if auth:
             h['Authorization'] = auth
         return h
@@ -255,17 +263,62 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             return _err(f'document {doc_id} not found in {cid}', 404, 'not_found_error')
         return {'deleted': True, 'collection': cid, 'doc_id': doc_id}
 
+    def _lim(t, name, default):
+        return int((t.limits or {}).get(name, default))
+
     @app.post('/v1/chat/completions')
     async def chat(request: Request):
         tenant, e = _tenant(request)
         if e:
             return e
+        if tenant is None:
+            return await _chat(request, None)
+        # 운영 모드 한도 (SPEC §10.4): 분당 → 동시. 거절된 요청은 업스트림을 부르지 않는다
+        lim = state['limiter']
+        ra = lim.hit(tenant.key_id, _lim(tenant, 'rpm', settings.rate_rpm))
+        if ra is not None:
+            r = _err('rate limit exceeded (requests per minute)', 429, 'rate_limit_error')
+            r.headers['retry-after'] = str(ra)
+            return r
+        if not lim.acquire(tenant.key_id, _lim(tenant, 'concurrent', settings.max_concurrent)):
+            r = _err('too many concurrent requests', 429, 'rate_limit_error')
+            r.headers['retry-after'] = '1'
+            return r
+        try:
+            resp = await _chat(request, tenant)
+        except BaseException:
+            lim.release(tenant.key_id)
+            raise
+        if isinstance(resp, StreamingResponse):          # 스트림이 끝나거나 끊길 때 풀어 준다
+            inner = resp.body_iterator
+
+            async def released():
+                try:
+                    async for x in inner:
+                        yield x
+                finally:
+                    lim.release(tenant.key_id)
+            resp.body_iterator = released()
+        else:
+            lim.release(tenant.key_id)
+        return resp
+
+    async def _chat(request, tenant):
+        if tenant is not None:                           # 업스트림 허용 목록 (SPEC §10.3)
+            up_name = request.headers.get('x-upstream', 'openai')
+            if up_name not in allow_up:
+                return _err(f'x-upstream must be one of {sorted(allow_up)}')
+            up_base = allow_up[up_name]
+        else:
+            up_name, up_base = '', settings.upstream_base_url
         raw = await request.json()
         try:
             body, ref, mode, action, stride, opts = ctxmod.extract(raw, settings.default_mode, settings.default_action,
                                                                    default_stride(), with_stride=True, with_opts=True)
         except ValueError as e:
             return _err(str(e))
+        if tenant is not None and ref and len(ref) > settings.max_ref_chars:
+            return _err(f'reference longer than {settings.max_ref_chars} characters', 413, 'request_too_large')
 
         # 컬렉션 RAG (SPEC §2.6): 요청에 근거가 없고 collection이 있으면 검색 → 프롬프트 삽입 → 같은 근거로 판정
         evidence, coll = None, opts.get('collection') if not ref else None
@@ -286,17 +339,21 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         retrieve_ms = (time.perf_counter() - t_r) * 1000
 
         client, judge = state['client'], state['judge']
-        url = settings.upstream_base_url.rstrip('/') + '/chat/completions'
+        url = up_base.rstrip('/') + '/chat/completions'
         headers = _headers(request)
         rec = RequestRecord(mode=mode, action=action, stride=stride, tag=request.headers.get('x-request-tag', ''),
                             collection=coll or '', retrieve_ms=retrieve_ms if coll else 0.0,
-                            n_evidence=len(evidence or []))
+                            n_evidence=len(evidence or []), tenant=tenant.key_id if tenant else '', upstream=up_name)
         thr = judge.threshold_for(stride)
         pc_on = bool(opts.get('post_check', settings.post_check_default)) and mode != 'off'
         vh = {'x-verification-mode': mode, 'x-verification-action': action, 'x-verification-stride': str(stride),
               'x-verification-post-check': 'on' if pc_on else 'off'}
         if coll:
             vh['x-verification-evidence'] = str(len(evidence or []))
+        if tenant is not None:
+            vh['x-upstream'] = up_name
+        pc_allow = ((lambda: state['keys'].take_post_check(tenant.key_id, _lim(tenant, 'post_check_daily', settings.post_check_daily)))
+                    if tenant is not None else None)
         ev_info = ({'kind': 'evidence', 'collection': coll, 'retrieve_ms': retrieve_ms,
                     'evidence': [e.to_dict() for e in evidence]} if evidence else None)
 
@@ -349,7 +406,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                                     **({'reason': rec.unverified_reason} if not rec.verified else {})}
             if pc_on:
                 data['verification']['post_check'] = await _post_check(state['post_checker'], ref, content, rec, rec.cut,
-                                                                       settings.post_check_timeout_ms)
+                                                                       settings.post_check_timeout_ms, pc_allow)
             rec.t_client_done = rec.now()
             _log(rec)
             return JSONResponse(data, headers=vh)
@@ -408,7 +465,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                     yield chunk(finish=meta.get('finish_reason', 'stop'))
                 if pc_on:                                         # 종료 청크 뒤, usage·[DONE] 앞에 1회 (SPEC §5.3)
                     yield chunk(verification=await _post_check(state['post_checker'], ref, delivered, rec, rec.cut,
-                                                               settings.post_check_timeout_ms))
+                                                               settings.post_check_timeout_ms, pc_allow))
                 if meta.get('usage'):
                     yield _sse({**json.loads(chunk()[6:]), 'usage': meta['usage']})
                 yield 'data: [DONE]\n\n'

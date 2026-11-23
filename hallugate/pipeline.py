@@ -61,6 +61,8 @@ class RequestRecord:
     sentences: list = field(default_factory=list)
     checks: list = field(default_factory=list)
     post_check: dict = None            # 응답 끝 2단 검증 결과 (SPEC §5.3)
+    tenant: str = ''                   # 운영 모드 키 ID (SPEC §10)
+    upstream: str = ''                 # 운영 모드 업스트림 이름 (SPEC §10.3)
 
     def now(self):
         return (time.perf_counter() - self.t0) * 1000
