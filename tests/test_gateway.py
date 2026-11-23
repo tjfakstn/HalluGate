@@ -881,3 +881,20 @@ def test_post_check_prompt_matches_j2():
     src = open(path, encoding='utf-8').read()
     i = src.index("SYS_SENT = '''") + len("SYS_SENT = '''")
     assert src[i:src.index("'''", i)] == SYSTEM
+
+
+# ---------------- 데모 화면 (SPEC §2.8) ----------------
+@pytest.mark.asyncio
+async def test_demo_page(tmp_path):
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path='', collection_db='')
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(s, judge=LexicalJudge(), http_client=up)),
+                               base_url='http://gw')
+    r = await client.get('/demo')
+    assert r.status_code == 200 and r.headers['content-type'].startswith('text/html')
+    assert '/v1/chat/completions' in r.text and 'post_check' in r.text and 'mock_response' in r.text
+    assert 'http://' not in r.text.replace('http://www.w3.org', '') and 'https://' not in r.text   # 외부 리소스 없음
+    s_off = Settings(upstream_base_url='http://mock/v1', metrics_path='', collection_db='', demo=False)
+    off = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(s_off, judge=LexicalJudge(), http_client=up)),
+                            base_url='http://gw')
+    assert (await off.get('/demo')).status_code == 404

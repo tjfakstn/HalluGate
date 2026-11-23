@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hallugate 데모</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #677085; --line: #e2e5eb;
+  --accent: #3157d5; --ok-bg: #e3f5ea; --ok-ink: #17613a; --bad-bg: #fde2e1; --bad-ink: #a4231c;
+  --warn: #d9822b; --post: #7b4ad1; --pending: #eef0f4; --code: #f1f3f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b1f27; --ink: #e6e9ef; --muted: #98a1b3; --line: #2c3240;
+    --accent: #7d9bff; --ok-bg: #173826; --ok-ink: #8fe0ad; --bad-bg: #4a1d1b; --bad-ink: #ffb3ad;
+    --warn: #f0a35a; --post: #b392f0; --pending: #252a35; --code: #232835;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; }
+header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { margin: 0; font-size: 18px; }
+header .sub { color: var(--muted); font-size: 13px; }
+#health { margin-left: auto; font-size: 12px; color: var(--muted); }
+#health b { color: var(--ink); font-weight: 600; }
+main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 16px; padding: 16px 24px; max-width: 1400px; margin: 0 auto; }
+@media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 12px 16px; } header { padding: 12px 16px; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.card + .card { margin-top: 12px; }
+h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+textarea, input[type=text], input[type=number], select {
+  width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+textarea { resize: vertical; min-height: 64px; }
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1; min-width: 0; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.chip:hover { border-color: var(--accent); }
+.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); margin-top: 10px; }
+.check input { width: auto; }
+.btns { display: flex; gap: 8px; margin-top: 14px; }
+button.primary { flex: 1; background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 9px; font: inherit; font-weight: 600; cursor: pointer; }
+button.primary:disabled { opacity: .5; cursor: default; }
+button.ghost { background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 9px 14px; font: inherit; cursor: pointer; }
+.hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+#out { font-size: 16px; line-height: 1.9; min-height: 120px; white-space: pre-wrap; word-break: break-word; }
+#out .empty { color: var(--muted); font-size: 14px; }
+.seg { padding: 1px 0; transition: background-color .25s; }
+.pending { background: var(--pending); }
+.ok { background: var(--ok-bg); }
+.bad { background: var(--bad-bg); color: var(--bad-ink); }
+.pre { text-decoration: underline wavy var(--warn); text-underline-offset: 4px; }
+.seg.post { box-shadow: inset 0 -3px 0 var(--post); }
+.cursor { display: inline-block; width: 7px; height: 1.1em; background: var(--accent); vertical-align: -2px; animation: blink 1s steps(1) infinite; margin-left: 1px; }
+@keyframes blink { 50% { opacity: 0; } }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.sw { width: 14px; height: 10px; border-radius: 3px; display: inline-block; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-top: 12px; }
+.stat { background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+.stat .k { font-size: 11px; color: var(--muted); }
+.stat .v { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.banner { border-radius: 8px; padding: 9px 12px; margin-top: 12px; font-size: 13px; display: none; }
+.banner.show { display: block; }
+.banner.warn { background: var(--pending); border-left: 3px solid var(--warn); }
+.banner.post { background: var(--pending); border-left: 3px solid var(--post); }
+.banner.cut { background: var(--bad-bg); color: var(--bad-ink); border-left: 3px solid var(--bad-ink); }
+.side { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+@media (max-width: 1100px) { .side { grid-template-columns: 1fr; } }
+.log { max-height: 280px; overflow: auto; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.log div { padding: 3px 0; border-bottom: 1px dashed var(--line); }
+.log .t { color: var(--muted); display: inline-block; min-width: 58px; }
+.tag { display: inline-block; font-size: 11px; border-radius: 4px; padding: 0 5px; margin-right: 4px; }
+.tag.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.tag.bad { background: var(--bad-bg); color: var(--bad-ink); }
+.tag.post { background: var(--pending); color: var(--post); }
+.tag.gray { background: var(--pending); color: var(--muted); }
+.evi { font-size: 12px; max-height: 280px; overflow: auto; }
+.evi div { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.evi .m { color: var(--muted); }
+details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 10px; }
+#raw { max-height: 240px; overflow: auto; background: var(--code); border-radius: 6px; padding: 8px; font: 11px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<header>
+  <h1>hallugate</h1>
+  <span class="sub">LLM 응답을 스트리밍 중에 문장 단위로 근거와 대조하는 검증 게이트웨이</span>
+  <span id="health">게이트웨이 확인 중…</span>
+</header>
+
+<main>
+  <section>
+    <div class="card">
+      <h2>예제 시나리오</h2>
+      <div class="chips" id="presets"></div>
+      <div class="hint">가짜 LLM(<code>mock_upstream.py</code>)이 아래 "가짜 LLM 응답"을 토큰 단위로 흘려보냅니다.</div>
+    </div>
+
+    <div class="card">
+      <h2>요청</h2>
+      <label for="source">근거</label>
+      <select id="source"><option value="">직접 입력한 근거 문서</option></select>
+      <label for="ref">근거 문서</label>
+      <textarea id="ref" rows="6"></textarea>
+      <label for="q">질문</label>
+      <input id="q" type="text">
+      <label for="mock">가짜 LLM 응답 <span class="hint">(실제 LLM에 연결했다면 비워 두세요)</span></label>
+      <textarea id="mock" rows="5"></textarea>
+      <div class="row">
+        <div><label for="model">모델</label><input id="model" type="text" value="mock"></div>
+        <div><label for="speed">토큰 간격(ms)</label><input id="speed" type="number" min="0" max="500" value="60"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>검증 옵션</h2>
+      <div class="row">
+        <div><label for="mode">전달 방식</label>
+          <select id="mode">
+            <option value="hold">hold — 판정 후 전달</option>
+            <option value="pass">pass — 즉시 전달</option>
+            <option value="off">off — 검증 안 함</option>
+          </select></div>
+        <div><label for="action">환각 판정 시</label>
+          <select id="action">
+            <option value="flag">flag — 표시만</option>
+            <option value="cut">cut — 응답 끊기</option>
+          </select></div>
+      </div>
+      <label for="stride">문장 앞부분 재판정 간격(토큰, 0 = 문장 끝만)</label>
+      <input id="stride" type="number" min="0" max="64" value="8">
+      <label class="check"><input id="post" type="checkbox"> 응답 끝 2단 검증 (Claude, 실험 기능)</label>
+      <div class="btns">
+        <button class="primary" id="send">보내기</button>
+        <button class="ghost" id="stop" disabled>멈추기</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>응답</h2>
+      <div id="out"><span class="empty">시나리오를 고르고 보내기를 누르세요.</span></div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--pending)"></i>판정 전</span>
+        <span><i class="sw" style="background:var(--ok-bg)"></i>근거와 일치</span>
+        <span><i class="sw" style="background:var(--bad-bg)"></i>환각 판정</span>
+        <span><i class="sw" style="background:none;border-bottom:2px dotted var(--warn);border-radius:0"></i>문장 도중 경보</span>
+        <span><i class="sw" style="background:none;box-shadow:inset 0 -3px 0 var(--post);border-radius:0"></i>2단 검증 환각</span>
+      </div>
+      <div class="banner cut" id="b-cut"></div>
+      <div class="banner warn" id="b-unv"></div>
+      <div class="banner post" id="b-post"></div>
+      <div class="stats">
+        <div class="stat"><div class="k">첫 글자까지</div><div class="v" id="s-first">–</div></div>
+        <div class="stat"><div class="k">전체 시간</div><div class="v" id="s-total">–</div></div>
+        <div class="stat"><div class="k">판정 수 (환각)</div><div class="v" id="s-n">–</div></div>
+        <div class="stat"><div class="k">판정 시간 최대</div><div class="v" id="s-judge">–</div></div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="card"><h2>판정 기록</h2><div class="log" id="log"></div></div>
+      <div class="card"><h2>사용한 근거 / 2단 검증</h2><div class="evi" id="evi"><span class="hint">근거 컬렉션을 쓰거나 2단 검증을 켜면 여기에 나옵니다.</span></div></div>
+    </div>
+    <details class="card"><summary>받은 청크 원문 (SSE)</summary><div id="raw"></div></details>
+  </section>
+</main>
+
+<script>
+const REF = 'Hanbit Robotics was founded in 2011 in Daejeon by Dr. Mina Seo. The company builds warehouse robots and employs about 340 people. In 2023 it reported revenue of 52 million dollars, up 18 percent from the previous year. Its main customers are logistics firms in Korea and Japan.';
+const PRESETS = [
+  { name: '근거와 일치', q: 'Tell me about Hanbit Robotics.',
+    a: 'Hanbit Robotics was founded in 2011 in Daejeon by Dr. Mina Seo. It builds warehouse robots and employs about 340 people. In 2023 it reported revenue of 52 million dollars, up 18 percent from the previous year.' },
+  { name: '근거에 없는 내용', q: 'What is new at Hanbit Robotics?',
+    a: 'Hanbit Robotics was founded in 2011 in Daejeon by Dr. Mina Seo. The company recently opened a research lab in Berlin and plans to list its shares on the Nasdaq next spring. Its main customers are logistics firms in Korea and Japan.' },
+  { name: '근거와 모순', q: 'How did Hanbit Robotics do in 2023?',
+    a: 'Hanbit Robotics builds warehouse robots and employs about 340 people. In 2023 it reported revenue of 52 million dollars, down 18 percent after losing its biggest customer in Germany. Its main customers are logistics firms in Korea and Japan.' },
+];
+const $ = id => document.getElementById(id);
+let ctrl = null, S = null;
+
+function fmtMs(x) { return x == null ? '–' : (x >= 1000 ? (x / 1000).toFixed(2) + 's' : Math.round(x) + 'ms'); }
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function loadPreset(p) { $('ref').value = REF; $('q').value = p.q; $('mock').value = p.a; $('source').value = ''; }
+
+async function init() {
+  PRESETS.forEach(p => { const b = document.createElement('button'); b.className = 'chip'; b.textContent = p.name; b.onclick = () => loadPreset(p); $('presets').appendChild(b); });
+  loadPreset(PRESETS[1]);
+  try {
+    const h = await (await fetch('/health')).json();
+    const pc = h.post_check || {};
+    $('health').innerHTML = `판정기 <b>${esc(h.judge)}</b>${h.judge === 'LexicalJudge' ? ' (시연용 대체 판정기, 판별력 없음)' : ''} · 임계값 <b>${Number(h.threshold).toFixed(3)}</b> · 2단 검증 <b>${pc.available ? esc(pc.model) : '사용 불가'}</b>`;
+    $('stride').value = h.stride ?? 8; $('mode').value = h.mode || 'hold'; $('action').value = h.action || 'flag';
+    $('post').checked = !!pc.default; $('post').disabled = !pc.available;
+    if (h.collections) {
+      const r = await fetch('/v1/collections');
+      if (r.ok) (await r.json()).data.forEach(c => { const o = document.createElement('option'); o.value = c.collection; o.textContent = `컬렉션: ${c.collection} (문서 ${c.n_docs})`; $('source').appendChild(o); });
+    }
+  } catch (e) { $('health').textContent = '게이트웨이 상태를 읽지 못했습니다'; }
+  $('source').onchange = () => { $('ref').disabled = !!$('source').value; };
+}
+
+function reset() {
+  S = { text: '', sent: {}, pre: [], post: null, evidence: null, unv: null, cut: null, t0: performance.now(), tFirst: null, tEnd: null,
+        nJ: 0, nBad: 0, maxJ: 0, done: false };
+  $('log').innerHTML = ''; $('raw').textContent = '';
+  $('evi').innerHTML = '<span class="hint">근거 컬렉션을 쓰거나 2단 검증을 켜면 여기에 나옵니다.</span>';
+  ['b-cut', 'b-unv', 'b-post'].forEach(id => $(id).classList.remove('show'));
+  render(); stats();
+}
+
+function stats() {
+  $('s-first').textContent = fmtMs(S.tFirst);
+  $('s-total').textContent = fmtMs(S.tEnd ?? (S.t0 && !S.done ? performance.now() - S.t0 : null));
+  $('s-n').textContent = S.nJ ? `${S.nJ} (${S.nBad})` : '–';
+  $('s-judge').textContent = S.nJ ? fmtMs(S.maxJ) : '–';
+}
+
+function postRanges() {
+  if (!S.post || !S.post.verified) return [];
+  const rows = S.post.sentences || [];
+  return rows.filter(r => r.flagged).map(r => {
+    const s = S.sent[r.sentence_idx]; const nxt = rows.find(x => x.start > r.start);
+    return [r.start, s ? s.upto : (nxt ? nxt.start : S.text.length), r];
+  });
+}
+
+function render() {
+  const out = $('out'), T = S.text;
+  if (!T) { out.innerHTML = S.done ? '<span class="empty">(본문 없음)</span>' : (S.t0 ? '<span class="cursor"></span>' : '<span class="empty">시나리오를 고르고 보내기를 누르세요.</span>'); return; }
+  const sents = Object.values(S.sent), pr = postRanges();
+  const cuts = new Set([0, T.length]);
+  sents.forEach(v => { cuts.add(v.start); cuts.add(Math.min(v.upto, T.length)); });
+  S.pre.forEach(v => { cuts.add(v.start); cuts.add(Math.min(v.upto, T.length)); });
+  pr.forEach(([a, b]) => { cuts.add(a); cuts.add(Math.min(b, T.length)); });
+  const pts = [...cuts].filter(x => x >= 0 && x <= T.length).sort((a, b) => a - b);
+  let html = '';
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1], mid = (a + b) / 2;
+    const sv = sents.find(v => v.start <= a && mid < v.upto);
+    const pv = S.pre.find(v => v.hallucinated && v.start <= a && mid < v.upto);
+    const po = pr.find(([x, y]) => x <= a && mid < y);
+    const cls = ['seg', sv ? (sv.hallucinated ? 'bad' : 'ok') : (S.mode === 'off' ? '' : 'pending')];
+    if (pv && !(sv && !sv.hallucinated)) cls.push('pre');
+    if (po) cls.push('post');
+    const tip = [];
+    if (sv) tip.push(`문장 ${sv.sentence_idx + 1}: 점수 ${sv.score.toFixed(3)} (${sv.hallucinated ? '환각' : '일치'}), 판정 ${sv.judge_ms.toFixed(1)}ms`);
+    if (pv) tip.push(`문장 도중 경보: 점수 ${pv.score.toFixed(3)}`);
+    if (po) tip.push(`2단 검증: ${po[2].h_votes}/${S.post.valid_votes} 판정이 환각${po[2].reason ? ' — ' + po[2].reason : ''}`);
+    html += `<span class="${cls.join(' ')}"${tip.length ? ` title="${esc(tip.join('\n'))}"` : ''}>${esc(T.slice(a, b))}</span>`;
+  }
+  out.innerHTML = html + (S.done ? '' : '<span class="cursor"></span>');
+}
+
+function log(kind, html) {
+  const d = document.createElement('div');
+  d.innerHTML = `<span class="t">${fmtMs(performance.now() - S.t0)}</span>${html}`;
+  $('log').appendChild(d); $('log').scrollTop = 1e9;
+}
+
+function onVerification(v) {
+  if (v.kind === 'evidence' || v.kind === 'post_check') { const h = $('evi').querySelector('.hint'); if (h) h.remove(); }
+  if (v.kind === 'evidence') {
+    S.evidence = v;
+    $('evi').innerHTML = `<div class="m">컬렉션 <b>${esc(v.collection)}</b>에서 조각 ${v.evidence.length}개 (${fmtMs(v.retrieve_ms)})</div>` +
+      v.evidence.map((e, i) => `<div><span class="m">[${i + 1}] ${esc(e.title || e.doc_id)} · 유사도 ${e.score.toFixed(3)}</span><br>${esc(e.text)}</div>`).join('');
+    return;
+  }
+  if (v.kind === 'post_check') {
+    S.post = v; const b = $('b-post');
+    if (v.verified) {
+      b.innerHTML = `<b>2단 검증 (${esc(v.model)})</b>: ${v.valid_votes}/${v.votes} 판정 유효, 응답 점수 ${v.score.toFixed(2)} (임계값 ${v.threshold}) → <b>${v.flagged ? '환각 있음' : '환각 없음'}</b> · ${fmtMs(v.check_ms)}`;
+      log('post', `<span class="tag post">2단</span>${v.flagged ? '환각 있음' : '환각 없음'} · 점수 ${v.score.toFixed(2)}`);
+      const rows = (v.sentences || []).filter(r => r.h_votes);
+      $('evi').insertAdjacentHTML('beforeend', rows.length ? rows.map(r => `<div><span class="tag post">2단</span>문장 ${r.sentence_idx + 1}: ${r.h_votes}표 환각${r.phrase ? ` — “${esc(r.phrase)}”` : ''}${r.reason ? `<br><span class="m">${esc(r.reason)}</span>` : ''}</div>`).join('') : '<div class="m">2단 검증: 환각으로 본 문장 없음</div>');
+    } else {
+      const why = { unavailable: 'ANTHROPIC_API_KEY가 없어 사용할 수 없음', timeout: '시간 초과', error: '검증기 오류', cut: '응답이 끊겨 건너뜀', empty: '판정할 문장 없음' }[v.reason] || v.reason;
+      b.innerHTML = `<b>2단 검증 안 됨</b>: ${esc(why)}`;
+      log('post', `<span class="tag gray">2단</span>${esc(why)}`);
+    }
+    b.classList.add('show'); render(); return;
+  }
+  if (v.kind === 'unverified') {
+    S.unv = v; const why = { judge_error: '판정기 오류', judge_timeout: '판정 시간 초과', non_english: '영어가 아닌 응답' }[v.reason] || v.reason;
+    $('b-unv').innerHTML = `<b>검증 중단</b> (${esc(why)}): 이후 본문은 검증 없이 그대로 전달됩니다.`; $('b-unv').classList.add('show');
+    log('unv', `<span class="tag gray">중단</span>${esc(why)}`); return;
+  }
+  if (v.cut) {
+    S.cut = v; $('b-cut').innerHTML = `<b>응답 차단</b>: 문장 ${v.sentence_idx + 1}에서 환각이 판정되어 응답을 끊었습니다 (cut).`; $('b-cut').classList.add('show');
+    log('cut', `<span class="tag bad">차단</span>문장 ${v.sentence_idx + 1}`); return;
+  }
+  if (v.kind === 'sentence' || v.kind === 'prefix') {
+    S.nJ++; if (v.hallucinated) S.nBad++; S.maxJ = Math.max(S.maxJ, v.judge_ms || 0);
+    if (v.kind === 'sentence') S.sent[v.sentence_idx] = v; else S.pre.push(v);
+    log(v.kind, `<span class="tag ${v.hallucinated ? 'bad' : 'ok'}">${v.kind === 'sentence' ? '문장' : '앞부분'} ${v.sentence_idx + 1}</span>점수 ${v.score.toFixed(3)} · ${v.judge_ms.toFixed(1)}ms · “${esc(v.text.length > 48 ? v.text.slice(0, 48) + '…' : v.text)}”`);
+    render(); stats();
+  }
+}
+
+async function send() {
+  reset(); S.mode = $('mode').value;
+  const ver = { mode: $('mode').value, action: $('action').value, stride: Math.max(0, parseInt($('stride').value || '0', 10)), post_check: $('post').checked };
+  if ($('source').value) ver.collection = $('source').value; else ver.context = $('ref').value;
+  const body = { model: $('model').value || 'mock', stream: true, messages: [{ role: 'user', content: $('q').value }], verification: ver };
+  if ($('mock').value.trim()) Object.assign(body, { mock_response: $('mock').value, mock_token_ms: parseInt($('speed').value || '60', 10), mock_ttft_ms: 300 });
+  ctrl = new AbortController(); $('send').disabled = true; $('stop').disabled = false;
+  const tick = setInterval(stats, 100);
+  try {
+    const r = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal });
+    if (!r.ok) { const t = await r.text(); log('err', `<span class="tag bad">오류 ${r.status}</span>${esc(t.slice(0, 200))}`); return; }
+    const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+    while (true) {
+      const { value, done } = await rd.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let k;
+      while ((k = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, k); buf = buf.slice(k + 2);
+        for (const line of block.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          $('raw').textContent += data + '\n';
+          if (data === '[DONE]') continue;
+          const c = JSON.parse(data);
+          if (c.verification) onVerification(c.verification);
+          for (const ch of c.choices || []) {
+            const t = ch.delta && ch.delta.content;
+            if (t) { if (S.tFirst == null) S.tFirst = performance.now() - S.t0; S.text += t; render(); }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') log('err', `<span class="tag bad">오류</span>${esc(String(e))}`);
+  } finally {
+    clearInterval(tick); S.done = true; S.tEnd = performance.now() - S.t0;
+    render(); stats(); $('send').disabled = false; $('stop').disabled = true;
+  }
+}
+
+$('send').onclick = send;
+$('stop').onclick = () => ctrl && ctrl.abort();
+init();
+</script>
+</body>
+</html>

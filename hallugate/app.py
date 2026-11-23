@@ -12,13 +12,14 @@ choices가 비어 있으므로 일반 클라이언트는 본문에 영향 없이
 """
 import asyncio
 import json
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from . import context as ctxmod
 from .config import Settings
@@ -148,6 +149,14 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         if auth:
             h['Authorization'] = auth
         return h
+
+    @app.get('/demo', include_in_schema=False)
+    async def demo():
+        # 발표·시연용 화면 (SPEC §2.8). 외부 리소스 없는 HTML 한 장
+        path = os.path.join(os.path.dirname(__file__), 'static', 'demo.html')
+        if not settings.demo or not os.path.isfile(path):
+            return _err('demo page is disabled', 404, 'not_found_error')
+        return HTMLResponse(open(path, encoding='utf-8').read())
 
     @app.get('/health')
     async def health():

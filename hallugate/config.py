@@ -61,5 +61,8 @@ class Settings:
     post_check_timeout_ms: float = field(default_factory=lambda: _env('POST_CHECK_TIMEOUT_MS', 30000.0, float))
     anthropic_api_key: str = field(default_factory=lambda: _env('ANTHROPIC_API_KEY', ''))
 
+    # 데모 화면 GET /demo (SPEC §2.8). 0이면 끈다
+    demo: bool = field(default_factory=lambda: _env('DEMO', True, lambda v: v.lower() not in ('0', 'false', 'no', 'off')))
+
     # 빈 값이면 기록하지 않는다
     metrics_path: str = field(default_factory=lambda: os.environ.get('METRICS_PATH', 'gateway_metrics.jsonl'))

@@ -138,6 +138,13 @@ cut 발생 시 종료 청크에 `{"cut": true, "sentence_idx": n}`이 함께 실
 - `mode=off`여도 검색·삽입은 한다(RAG만 쓰고 검증은 끄는 경우). 질문이 비어 조각을 못 찾으면 삽입 없이 `mode=off`.
 - 측정 기록: `collection`, `retrieve_ms`, `n_evidence`.
 
+### 2.8 데모 화면 `GET /demo` ✅
+발표·시연용 웹 페이지 한 장(`hallugate/static/demo.html`, 외부 리소스 없음 — 인터넷 없이 동작). 게이트웨이와 같은 주소에서 열리고, 일반 클라이언트처럼 `POST /v1/chat/completions`(스트리밍)만 호출한다. 서버 동작은 바꾸지 않는다.
+- 입력: 근거 문서(또는 등록된 컬렉션), 질문, 모델 이름, 검증 옵션(`mode`·`action`·`stride`·`post_check`). 예제 시나리오(멀쩡한 답, 근거와 모순, 근거에 없는 내용)를 고르면 입력이 채워진다
+- **가짜 LLM 응답**: 칸을 채우면 요청에 `mock_response`·`mock_token_ms`를 넣는다(가짜 LLM `mock_upstream.py` 전용). 실제 LLM에 연결했을 때는 비워 둔다(실제 API는 모르는 필드를 거부함)
+- 출력: 본문이 흘러나오는 대로 표시하고, 판정 청크가 오면 해당 구간(`start`~`upto`)을 색으로 칠한다(문장 판정: 안전/환각, 앞부분 판정: 문장 도중 경보 표시). 2단 검증 결과는 문장별 표시와 응답 점수로, 근거 청크는 사용한 조각 목록으로, 검증 중단은 알림으로 보인다. 첫 글자까지 시간·전체 시간·판정 수·판정 시간을 함께 보인다
+- `DEMO=0`이면 404 (운영에서 끄기)
+
 ### 2.7 업스트림
 - 📋 `UPSTREAM_PROVIDER=openai|anthropic`. OpenAI 형식은 그대로 통과, Claude는 Messages API로 변환해 호출하고 응답을 OpenAI 청크 형식으로 되돌린다.
 - ✅ 스트리밍의 `delta.tool_calls`·`function_call`·`refusal`은 판정 없이 도착 즉시 그대로 통과한다(본문과 같은 청크에 있으면 분리해 보냄).
@@ -311,6 +318,7 @@ J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐*
 | `POST_CHECK_MODEL` / `POST_CHECK_VOTES` / `POST_CHECK_THRESHOLD` | `claude-sonnet-5-5` / 3 / 0.5 | 2단 검증 모델, 판정 횟수, 응답 표시 임계값(H로 본 판정 비율) |
 | `POST_CHECK_TIMEOUT_MS` | 30000 | 2단 검증 시간 제한, 넘으면 `verified: false` |
 | `ANTHROPIC_API_KEY` | (빈 값) | 2단 검증용. 없으면 2단 검증 불가(`unavailable`) |
+| `DEMO` | `1` | `0`이면 데모 화면(`/demo`)을 끈다 (§2.8) |
 | `METRICS_PATH` | `gateway_metrics.jsonl` | 빈 값이면 기록 안 함 |
 
 ## 8. 수용 기준
@@ -340,4 +348,4 @@ J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐*
 | F | ~~조합 판정기(F1 base + I2) 게이트웨이 연결~~ ✅(11/23, A13). 모델 v1.0 동결: F1 base 판정기, `judge_config.json` v1.0(8토큰·서비스 10% 임계값, 재생성용 임계값), `judge_batch`, 고정 예제 일치 |
 | S4 | ~~재판정 간격 토큰 단위, `tool_calls`·`usage` 통과(A10), 판정기 설정 파일, 언어 감지, fail-open~~ ✅(11/05), ~~컬렉션 API·저장소·검색·프롬프트 삽입·`evidence`(§2.5·2.6, A9), 문서 API 접근 토큰~~ ✅(11/05), Claude Messages API 변환(§2.7), 재생성(§5.2), 판정 묶음 처리, 배포 후 실제 LLM 속도로 종단 간 재측정 |
 | S5 | RAGTruth test 1회 개방 최종 평가, 기존 도구의 고정 설정(NeMo Guardrails의 chunk 200 등)과 비교 |
-| S6 | 데모 (서비스 예제 + 판정 시각화), 보고서, SOFTCON |
+| S6 | ~~데모 화면(판정 시각화, `/demo`)~~ ✅(11/23), 시연 시나리오·녹화, 보고서, SOFTCON |
