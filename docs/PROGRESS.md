@@ -415,3 +415,11 @@
 - **단서**: Claude Haiku 생성·Opus 평가(사람 정답 아님), RAGTruth QA 한 종류, 근거 대부분이 무관한 문서인 상황
 - **근거 다이어트 실험 정리**: T1(설계 결함으로 미달) → T1b(top_k 4, 충실성 미달) → T1c(top_k 8, 채택). 총 API 비용 약 $16.8
 - 산출물: `docs/analysis/t1c/`
+
+## 11/23 — 실제 가중치로 게이트웨이 확인
+
+- 드라이브 `final/judge_base`(F1 base)와 `i2/judge_i2`(I2)를 받아 `judge_combo/`로 구성(저장소 밖, `configs/judge_combo_v1.json`을 설정 파일로)
+- **점수 일치**: F1 base 고정 예제 50개에서 게이트웨이 점수 차이 최대 0.000016(A11), 조합 점수 = 두 판정기 표준화 평균(오차 0), MPS·CPU 차이 0.0000036
+- **맥 속도**: 조합 판정 1회 CPU p50 837ms, MPS p50 690ms(콜드), 예열 후 약 100~180ms → 실시간 서비스는 GPU 전제(A100 p95 61.3ms)
+- **데모(가짜 LLM + 실제 조합 판정기)**: "근거와 일치" 경고 없음, "근거에 없는 내용"·"근거와 모순"은 문제 문장만 환각(점수 3.77·3.34, 임계값 2.7385). 모순 문장은 문장이 끝나기 전 앞부분 판정에서 먼저 경보. 시연용 예제라 성능 수치로 쓰지 않음
+- 맥 로컬 실행: `JUDGE_MODEL_DIR=judge_combo JUDGE_DEVICE=mps JUDGE_TIMEOUT_MS=15000 python serve.py`

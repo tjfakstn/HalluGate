@@ -56,8 +56,9 @@ python mock_upstream.py --port 9000 &
 UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --lexical --port 8000 &
 # 데모 화면: 브라우저에서 http://127.0.0.1:8000/demo (예제 시나리오 → 보내기)
 
-# 학습 판정기로 실행 (배포 조합: 폴더에 f1_base/·i2/ 하위 판정기 + configs/judge_combo_v1.json을 judge_config.json으로 복사)
-JUDGE_MODEL_DIR=path/to/judge_combo UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --port 8000 &
+# 학습 판정기로 실행 (배포 조합: judge_combo/에 드라이브 final/judge_base → f1_base/, i2/judge_i2 → i2/,
+# configs/judge_combo_v1.json → judge_config.json). GPU 권장, 맥은 JUDGE_DEVICE=mps JUDGE_TIMEOUT_MS=15000
+JUDGE_MODEL_DIR=judge_combo UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --port 8000 &
 
 # 종단 간 측정 (RAGTruth 필요)
 git clone --depth 1 https://github.com/ParticleMedia/RAGTruth.git

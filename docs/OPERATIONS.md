@@ -18,7 +18,7 @@ modal token new
 브라우저에서 로그인하면 맥에 토큰이 저장된다. 결제 수단 등록과 요금제 선택은 계정 주인이 직접 한다(무료 크레딧 조건은 [modal.com/pricing](https://modal.com/pricing)에서 확인).
 
 ### 1.2 판정기 가중치 올리기
-드라이브 `final/`에서 받은 두 판정기를 이 구조로 맞춘다. 가중치는 저장소에 넣지 않는다.
+드라이브 `Colab Notebooks/HalluGate/final/judge_base`(F1 base)와 `Colab Notebooks/HalluGate/i2/judge_i2`(I2)를 받아 이 구조로 맞춘다. 가중치는 저장소에 넣지 않는다(`judge_combo/`는 `.gitignore`).
 ```
 judge_combo/
 ├─ judge_config.json   ← configs/judge_combo_v1.json 복사
