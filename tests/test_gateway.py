@@ -898,3 +898,125 @@ async def test_demo_page(tmp_path):
     off = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(s_off, judge=LexicalJudge(), http_client=up)),
                             base_url='http://gw')
     assert (await off.get('/demo')).status_code == 404
+
+
+# ---------------- 운영 모드: 인증·사용자 분리 (SPEC §10.1·10.2, H1·H2) ----------------
+def test_keystore_create_verify_revoke(tmp_path):
+    import sqlite3
+    from hallugate.keys import KeyStore
+    ks = KeyStore(str(tmp_path / 'k.sqlite3'))
+    kid, secret = ks.create('alice')
+    assert secret.startswith(f'hg_{kid}_') and len(secret) > 30
+    t = ks.verify(secret)
+    assert t is not None and t.key_id == kid and t.name == 'alice'
+    assert ks.verify(None) is None and ks.verify('') is None and ks.verify('hg_nope_x') is None
+    assert ks.verify(secret[:-1] + ('a' if secret[-1] != 'a' else 'b')) is None      # 비밀 한 글자만 달라도 거부
+    assert ks.verify(f'hg_{kid}') is None and ks.verify('Bearer ' + secret) is None
+    rows = ks.list()
+    assert [r['key_id'] for r in rows] == [kid] and 'hash' not in rows[0] and rows[0]['revoked'] is None
+    dump = '\n'.join(sqlite3.connect(str(tmp_path / 'k.sqlite3')).iterdump())
+    assert secret.split('_', 2)[2] not in dump                           # 비밀 원문은 저장하지 않음 (해시만)
+    assert ks.revoke(kid) and not ks.revoke('nope')
+    assert ks.verify(secret) is None and ks.list()[0]['revoked'] is not None
+
+
+def _hosted_gw(tmp_path, **kw):
+    from hallugate.keys import KeyStore
+    sent = []
+
+    async def hook(req):
+        sent.append(json.loads(req.content))
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock',
+                           event_hooks={'request': [hook]})
+    s = Settings(upstream_base_url='http://mock/v1', metrics_path=str(tmp_path / 'm.jsonl'), stride_tokenizer='words',
+                 collection_top_k=2, hosted=True, keys_db=str(tmp_path / 'k.sqlite3'), admin_token='adm', **kw)
+    ks, st = KeyStore(s.keys_db), _store(tmp_path)
+    app = create_app(s, judge=CapJudge(threshold=0.5), http_client=up, store=st, keys=ks)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://gw'), s, st, ks, sent
+
+
+def _K(secret):
+    return {'x-hallugate-key': secret}
+
+
+@pytest.mark.asyncio
+async def test_hosted_auth_required(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    kid, key = ks.create('alice')
+    b = body(GOOD, 'hold')
+    for h in [{}, _K('hg_bad_bad'), {'Authorization': f'Bearer {key}'}, {'Authorization': 'Bearer adm'}]:
+        r = await client.post('/v1/chat/completions', json=b, headers=h)
+        assert r.status_code == 401 and r.json()['error']['type'] == 'authentication_error', h
+        assert (await client.get('/v1/collections', headers=h)).status_code == 401
+        assert (await client.post('/v1/collections/kb/documents', json={'text': DOC_A}, headers=h)).status_code == 401
+    assert sent == []                                                  # 인증 실패는 업스트림을 부르지 않음
+    text, ev, _ = await run(client.__class__(transport=client._transport, base_url='http://gw', headers=_K(key)), b)
+    assert text == GOOD
+    ks.revoke(kid)
+    assert (await client.post('/v1/chat/completions', json=b, headers=_K(key))).status_code == 401
+    h = (await client.get('/health')).json()                           # 운영 모드 health는 내부 값 숨김
+    assert h['ok'] and h['hosted'] and 'threshold' not in h and 'judge' not in h
+
+
+@pytest.mark.asyncio
+async def test_hosted_tenant_isolation(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    _, ka = ks.create('alice'); _, kb = ks.create('bob')
+    A, B = _K(ka), _K(kb)
+    url = '/v1/collections/kb/documents'
+    assert (await client.post(url, json={'text': DOC_A, 'doc_id': 'a'}, headers=A)).status_code == 200
+    # B에게는 A의 컬렉션이 없는 것과 같다
+    assert (await client.get('/v1/collections', headers=B)).json()['data'] == []
+    assert (await client.get(url, headers=B)).status_code == 404
+    assert (await client.delete(url + '/a', headers=B)).status_code == 404
+    rb = rag_body(GOOD)
+    assert (await client.post('/v1/chat/completions', json=rb, headers=B)).status_code == 404
+    rb['verification']['collection'] = f'{ks.list()[0]["key_id"]}/kb'                # 내부 이름을 흉내 내도 못 봄
+    assert (await client.post('/v1/chat/completions', json=rb, headers=B)).status_code == 404
+    # B가 같은 이름으로 만들면 별개 컬렉션
+    assert (await client.post(url, json={'text': DOC_B, 'doc_id': 'b'}, headers=B)).status_code == 200
+    assert (await client.get('/v1/collections', headers=A)).json()['data'] == [{'collection': 'kb', 'n_docs': 1}]
+    assert [d['doc_id'] for d in (await client.get(url, headers=A)).json()['data']] == ['a']
+    assert [d['doc_id'] for d in (await client.get(url, headers=B)).json()['data']] == ['b']
+    # 채팅 근거도 자기 컬렉션에서만
+    cA = client.__class__(transport=client._transport, base_url='http://gw', headers=A)
+    _, ev, _ = await run(cA, rag_body(GOOD))
+    evi = next(e for k, e in ev if k == 'v' and e.get('kind') == 'evidence')
+    assert evi['collection'] == 'kb' and {x['doc_id'] for x in evi['evidence']} == {'a'}
+    assert 'penguin' not in sent[-1]['messages'][0]['content'].lower()
+    # A가 지워도 B의 문서는 그대로
+    assert (await client.delete(url + '/a', headers=A)).json()['deleted'] is True
+    assert [d['doc_id'] for d in (await client.get(url, headers=B)).json()['data']] == ['b']
+
+
+@pytest.mark.asyncio
+async def test_hosted_document_limits(tmp_path):
+    client, s, st, ks, _ = _hosted_gw(tmp_path, max_docs=2, max_doc_chars=50)
+    _, k = ks.create('alice')
+    url = '/v1/collections/kb/documents'
+    assert (await client.post(url, json={'text': 'x' * 51}, headers=_K(k))).status_code == 413
+    assert (await client.post(url, json={'documents': [{'text': 'one doc'}, {'text': 'two doc'}, {'text': 'three'}]},
+                              headers=_K(k))).status_code == 413
+    assert (await client.post(url, json={'documents': [{'text': 'one doc', 'doc_id': '1'}, {'text': 'two', 'doc_id': '2'}]},
+                              headers=_K(k))).status_code == 200
+    assert (await client.post('/v1/collections/other/documents', json={'text': 'three'}, headers=_K(k))).status_code == 413
+    assert (await client.post(url, json={'text': 'replaced', 'doc_id': '1'}, headers=_K(k))).status_code == 200   # 교체는 개수 안 늘림
+
+
+def test_keys_cli(tmp_path, capsys):
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location('keys_cli', os.path.join(root, 'scripts', 'keys.py'))
+    cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+    db, cdb = str(tmp_path / 'k.sqlite3'), str(tmp_path / 'c.sqlite3')
+    cli.main(['--db', db, 'create', '--name', 'alice'])
+    out = capsys.readouterr().out
+    key = next(w for w in out.split() if w.startswith('hg_'))
+    from hallugate.keys import KeyStore
+    kid = KeyStore(db).verify(key).key_id
+    st = _store(tmp_path); st.add(f'{kid}/kb', DOC_A); st.add('other/kb', DOC_B); st.close()
+    cli.main(['--db', db, 'list']); assert kid in capsys.readouterr().out
+    cli.main(['--db', db, '--collections', cdb, 'revoke', kid, '--purge'])
+    assert KeyStore(db).verify(key) is None
+    from hallugate.store import SQLiteStore
+    assert [c['collection'] for c in SQLiteStore(cdb, None).collections()] == ['other/kb']     # 그 사용자 것만 지움

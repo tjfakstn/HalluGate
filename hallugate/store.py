@@ -124,5 +124,24 @@ class SQLiteStore:
         top = np.argsort(-sims)[:k]
         return [Evidence(meta[i][0], meta[i][1], meta[i][2], meta[i][3], float(sims[i])) for i in top]
 
+    def count_docs(self, prefix):
+        """이름이 prefix로 시작하는 컬렉션들의 문서 수 (운영 모드 사용자별 한도, SPEC §10.2)."""
+        with self._lock:
+            return self._db.execute("SELECT count(*) FROM documents WHERE substr(collection, 1, ?)=?",
+                                    (len(prefix), prefix)).fetchone()[0]
+
+    def doc_exists(self, collection, doc_id):
+        with self._lock:
+            return self._db.execute('SELECT 1 FROM documents WHERE collection=? AND doc_id=?',
+                                    (collection, doc_id)).fetchone() is not None
+
+    def purge(self, prefix):
+        """이름이 prefix로 시작하는 컬렉션을 모두 지운다 (키 폐기 --purge). 지운 문서 수."""
+        with self._lock, self._db:
+            n = self._db.execute('DELETE FROM documents WHERE substr(collection, 1, ?)=?', (len(prefix), prefix)).rowcount
+            self._db.execute('DELETE FROM chunks WHERE substr(collection, 1, ?)=?', (len(prefix), prefix))
+            self._cache.clear()
+        return n
+
     def close(self):
         self._db.close()

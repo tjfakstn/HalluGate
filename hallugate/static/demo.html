@@ -97,7 +97,14 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
     <div class="card">
       <h2>예제 시나리오</h2>
       <div class="chips" id="presets"></div>
-      <div class="hint">가짜 LLM(<code>mock_upstream.py</code>)이 아래 "가짜 LLM 응답"을 토큰 단위로 흘려보냅니다.</div>
+      <div class="hint" id="presethint">가짜 LLM(<code>mock_upstream.py</code>)이 아래 "가짜 LLM 응답"을 토큰 단위로 흘려보냅니다.</div>
+    </div>
+
+    <div class="card" id="keycard" hidden>
+      <h2>운영 모드 키</h2>
+      <label for="hgkey">게이트웨이 키 (<code>x-hallugate-key</code>)</label>
+      <input id="hgkey" type="password" autocomplete="off" placeholder="hg_...">
+      <div class="hint">이 브라우저 탭에만 보관하고 서버에는 저장하지 않습니다.</div>
     </div>
 
     <div class="card">
@@ -182,18 +189,33 @@ const PRESETS = [
     a: 'Hanbit Robotics builds warehouse robots and employs about 340 people. In 2023 it reported revenue of 52 million dollars, down 18 percent after losing its biggest customer in Germany. Its main customers are logistics firms in Korea and Japan.' },
 ];
 const $ = id => document.getElementById(id);
-let ctrl = null, S = null;
+let ctrl = null, S = null, HOSTED = false;
 
 function fmtMs(x) { return x == null ? '–' : (x >= 1000 ? (x / 1000).toFixed(2) + 's' : Math.round(x) + 'ms'); }
 function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
-function loadPreset(p) { $('ref').value = REF; $('q').value = p.q; $('mock').value = p.a; $('source').value = ''; }
+function keyHeaders() {
+  const k = $('hgkey').value.trim();
+  try { sessionStorage.setItem('hgkey', k); } catch (e) {}
+  return k ? { 'x-hallugate-key': k } : {};
+}
+
+function loadPreset(p) { $('ref').value = REF; $('q').value = p.q; $('mock').value = HOSTED ? '' : p.a; $('source').value = ''; }
 
 async function init() {
   PRESETS.forEach(p => { const b = document.createElement('button'); b.className = 'chip'; b.textContent = p.name; b.onclick = () => loadPreset(p); $('presets').appendChild(b); });
   loadPreset(PRESETS[1]);
   try {
     const h = await (await fetch('/health')).json();
+    if (h.hosted) {
+      HOSTED = true; $('keycard').hidden = false;
+      $('presethint').textContent = '예제는 근거와 질문만 채웁니다. 실제 LLM이 답을 생성합니다.';
+      try { $('hgkey').value = sessionStorage.getItem('hgkey') || ''; } catch (e) {}
+      $('mock').value = ''; $('model').value = '';
+      $('health').innerHTML = '<b>운영 모드</b> · 영어 응답만 검증합니다';
+      $('post').disabled = false;
+      return;
+    }
     const pc = h.post_check || {};
     $('health').innerHTML = `판정기 <b>${esc(h.judge)}</b>${h.judge === 'LexicalJudge' ? ' (시연용 대체 판정기, 판별력 없음)' : ''} · 임계값 <b>${Number(h.threshold).toFixed(3)}</b> · 2단 검증 <b>${pc.available ? esc(pc.model) : '사용 불가'}</b>`;
     $('stride').value = h.stride ?? 8; $('mode').value = h.mode || 'hold'; $('action').value = h.action || 'flag';
@@ -312,7 +334,7 @@ async function send() {
   ctrl = new AbortController(); $('send').disabled = true; $('stop').disabled = false;
   const tick = setInterval(stats, 100);
   try {
-    const r = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal });
+    const r = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify(body), signal: ctrl.signal });
     if (!r.ok) { const t = await r.text(); log('err', `<span class="tag bad">오류 ${r.status}</span>${esc(t.slice(0, 200))}`); return; }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
     while (true) {

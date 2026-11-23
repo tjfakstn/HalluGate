@@ -61,6 +61,12 @@ class Settings:
     post_check_timeout_ms: float = field(default_factory=lambda: _env('POST_CHECK_TIMEOUT_MS', 30000.0, float))
     anthropic_api_key: str = field(default_factory=lambda: _env('ANTHROPIC_API_KEY', ''))
 
+    # 운영 모드 (관리형 베타, SPEC §10). 1이면 x-hallugate-key 인증·사용자별 컬렉션·한도 적용
+    hosted: bool = field(default_factory=lambda: _env('HOSTED', False, lambda v: v.lower() in ('1', 'true', 'yes', 'on')))
+    keys_db: str = field(default_factory=lambda: _env('KEYS_DB', '/data/hallugate.sqlite3'))
+    max_docs: int = field(default_factory=lambda: _env('MAX_DOCS', 200, int))
+    max_doc_chars: int = field(default_factory=lambda: _env('MAX_DOC_CHARS', 200000, int))
+
     # 데모 화면 GET /demo (SPEC §2.8). 0이면 끈다
     demo: bool = field(default_factory=lambda: _env('DEMO', True, lambda v: v.lower() not in ('0', 'false', 'no', 'off')))
 

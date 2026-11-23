@@ -100,13 +100,16 @@ def _err(msg, status=400, kind='invalid_request_error'):
     return JSONResponse({'error': {'message': msg, 'type': kind}}, status_code=status)
 
 
-def create_app(settings=None, judge=None, http_client=None, store=None, post_checker=None):
+def create_app(settings=None, judge=None, http_client=None, store=None, post_checker=None, keys=None):
     settings = settings or Settings()
+    if settings.hosted and keys is None:                  # 운영 모드 API 키 저장소 (SPEC §10.1)
+        from .keys import KeyStore
+        keys = KeyStore(settings.keys_db)
     if post_checker is None and settings.anthropic_api_key:
         from .postcheck import ClaudePostChecker
         post_checker = ClaudePostChecker(api_key=settings.anthropic_api_key, model=settings.post_check_model,
                                          votes=settings.post_check_votes, threshold=settings.post_check_threshold)
-    state = {'judge': judge, 'client': http_client, 'store': store, 'post_checker': post_checker}
+    state = {'judge': judge, 'client': http_client, 'store': store, 'post_checker': post_checker, 'keys': keys}
     tokens = make_tokens(settings.stride_tokenizer)
 
     def default_stride():
@@ -160,6 +163,8 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
 
     @app.get('/health')
     async def health():
+        if settings.hosted:                              # 운영 모드: 판정기 내부 값은 숨긴다 (SPEC §10.1)
+            return {'ok': True, 'hosted': True}
         j, st, pc = state['judge'], default_stride(), state['post_checker']
         return {'ok': True, 'judge': type(j).__name__, 'input_mode': getattr(j, 'mode', ''),
                 'mode': settings.default_mode, 'action': settings.default_action, 'stride': st,
@@ -171,50 +176,90 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                                'threshold': getattr(pc, 'threshold', settings.post_check_threshold)}}
 
     # ---------- 컬렉션 문서 등록 API (SPEC §2.5) ----------
-    def _admin(request):
-        """문서 API 접근 확인. 문제가 있으면 오류 응답, 통과면 None."""
+    def _tenant(request):
+        """운영 모드 인증 (SPEC §10.1): (Tenant 또는 None, 오류 응답 또는 None). 셀프호스팅이면 (None, None)."""
+        if not settings.hosted:
+            return None, None
+        t = state['keys'].verify(request.headers.get('x-hallugate-key'))
+        if t is None:
+            return None, _err('invalid or missing x-hallugate-key', 401, 'authentication_error')
+        return t, None
+
+    def _cname(t, cid):
+        # 운영 모드에서는 컬렉션 이름 앞에 키 ID를 붙여 사용자별로 분리한다 (SPEC §10.2)
+        return f'{t.key_id}/{cid}' if t is not None else cid
+
+    def _docs_access(request):
+        """문서 API 접근 확인: (Tenant 또는 None, 오류 응답 또는 None)."""
+        if settings.hosted:
+            t, e = _tenant(request)
+            if e:
+                return None, e
+        else:
+            t = None
+            if settings.admin_token and request.headers.get('authorization') != f'Bearer {settings.admin_token}':
+                return None, _err('invalid or missing admin token', 401, 'authentication_error')
         if state['store'] is None:
-            return _err('collections are disabled (COLLECTION_DB is empty)', 503, 'unavailable')
-        if settings.admin_token and request.headers.get('authorization') != f'Bearer {settings.admin_token}':
-            return _err('invalid or missing admin token', 401, 'authentication_error')
-        return None
+            return None, _err('collections are disabled (COLLECTION_DB is empty)', 503, 'unavailable')
+        return t, None
 
     @app.get('/v1/collections')
     async def list_collections(request: Request):
-        if (e := _admin(request)):
+        t, e = _docs_access(request)
+        if e:
             return e
-        return {'object': 'list', 'data': await asyncio.to_thread(state['store'].collections)}
+        rows = await asyncio.to_thread(state['store'].collections)
+        if t is not None:
+            pre = _cname(t, '')
+            rows = [{**r, 'collection': r['collection'][len(pre):]} for r in rows if r['collection'].startswith(pre)]
+        return {'object': 'list', 'data': rows}
 
     @app.post('/v1/collections/{cid}/documents')
     async def add_documents(cid: str, request: Request):
         """{"text": ..., "title"?: ..., "doc_id"?: ...} 또는 {"documents": [그런 객체, ...]}. 같은 doc_id면 교체."""
-        if (e := _admin(request)):
+        t, e = _docs_access(request)
+        if e:
             return e
         b = await request.json()
         docs = b.get('documents') if isinstance(b.get('documents'), list) else [b]
         if not docs or not all(isinstance(d, dict) and isinstance(d.get('text'), str) and d['text'].strip() for d in docs):
             return _err('each document needs a non-empty "text"')
+        store, name = state['store'], _cname(t, cid)
+        if t is not None:                                # 운영 모드 크기 한도 (SPEC §10.2)
+            if any(len(d['text']) > settings.max_doc_chars for d in docs):
+                return _err(f'document longer than {settings.max_doc_chars} characters', 413, 'request_too_large')
+            new = sum(1 for d in docs if not d.get('doc_id') or not store.doc_exists(name, d['doc_id']))
+            if await asyncio.to_thread(store.count_docs, _cname(t, '')) + new > settings.max_docs:
+                return _err(f'document limit ({settings.max_docs}) reached', 413, 'request_too_large')
         out = []
         for d in docs:
-            out.append(await asyncio.to_thread(state['store'].add, cid, d['text'], d.get('title', ''), d.get('doc_id')))
+            out.append(await asyncio.to_thread(store.add, name, d['text'], d.get('title', ''), d.get('doc_id')))
         return {'object': 'list', 'collection': cid, 'data': out}
 
     @app.get('/v1/collections/{cid}/documents')
     async def list_documents(cid: str, request: Request):
-        if (e := _admin(request)):
+        t, e = _docs_access(request)
+        if e:
             return e
-        return {'object': 'list', 'collection': cid, 'data': await asyncio.to_thread(state['store'].list, cid)}
+        name = _cname(t, cid)
+        if t is not None and not await asyncio.to_thread(state['store'].exists, name):
+            return _err(f'collection {cid} not found', 404, 'not_found_error')
+        return {'object': 'list', 'collection': cid, 'data': await asyncio.to_thread(state['store'].list, name)}
 
     @app.delete('/v1/collections/{cid}/documents/{doc_id}')
     async def delete_document(cid: str, doc_id: str, request: Request):
-        if (e := _admin(request)):
+        t, e = _docs_access(request)
+        if e:
             return e
-        if not await asyncio.to_thread(state['store'].delete, cid, doc_id):
+        if not await asyncio.to_thread(state['store'].delete, _cname(t, cid), doc_id):
             return _err(f'document {doc_id} not found in {cid}', 404, 'not_found_error')
         return {'deleted': True, 'collection': cid, 'doc_id': doc_id}
 
     @app.post('/v1/chat/completions')
     async def chat(request: Request):
+        tenant, e = _tenant(request)
+        if e:
+            return e
         raw = await request.json()
         try:
             body, ref, mode, action, stride, opts = ctxmod.extract(raw, settings.default_mode, settings.default_action,
@@ -229,9 +274,10 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             store = state['store']
             if store is None:
                 return _err('collections are disabled (COLLECTION_DB is empty)', 503, 'unavailable')
-            if not await asyncio.to_thread(store.exists, coll):
+            cname = _cname(tenant, coll)
+            if not await asyncio.to_thread(store.exists, cname):
                 return _err(f'collection {coll} not found', 404, 'not_found_error')
-            evidence = await asyncio.to_thread(store.search, coll, ctxmod.last_user_text(body), settings.collection_top_k)
+            evidence = await asyncio.to_thread(store.search, cname, ctxmod.last_user_text(body), settings.collection_top_k)
             if evidence:
                 body['messages'] = ctxmod.rag_messages(body.get('messages', []), evidence)
                 ref = ctxmod.rag_reference(evidence)
