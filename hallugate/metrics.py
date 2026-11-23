@@ -49,6 +49,8 @@ def summarize(rec, status=200, stream=True, cold=False):
         'judge_ms_p95': _pct(jms, 95), 'verified': rec.get('verified'), 'unverified_reason': rec.get('unverified_reason') or '',
         'cut': rec.get('cut'), 'collection_used': bool(rec.get('collection')), 'n_evidence': rec.get('n_evidence', 0),
         'cold': bool(cold),
+        'trim_chars_before': rec.get('trim_chars_before', 0), 'trim_chars_after': rec.get('trim_chars_after', 0),
+        'trim_chunks_kept': rec.get('trim_chunks_kept', 0), 'trim_chunks_total': rec.get('trim_chunks_total', 0),
         'post_check': {k: pc[k] for k in PC_KEYS if k in pc} if isinstance(pc, dict) else None,
         **llm_usage(rec.get('model'), rec.get('usage')),
     }

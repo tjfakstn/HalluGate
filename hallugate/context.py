@@ -40,6 +40,28 @@ def rag_messages(messages, evidence):
     return [{'role': 'system', 'content': f'{RAG_INSTRUCTION}\n\n<documents>\n{block}\n</documents>'}] + list(messages)
 
 
+def strip_context_tags(text):
+    """질문 텍스트: <context> 태그 내용을 뺀 나머지 (근거 다이어트 검색어, SPEC §2.9)."""
+    return CTX_TAG.sub(' ', text or '').strip()
+
+
+def replace_context_tags(messages, new_ref):
+    """첫 <context> 태그 내용을 new_ref로 바꾸고 나머지 태그는 지운다. 다른 내용은 그대로 (SPEC §2.9)."""
+    out, done = [], False
+    for m in messages:
+        c = m.get('content')
+        if isinstance(c, str) and CTX_TAG.search(c):
+            def sub(mt):
+                nonlocal done
+                if done:
+                    return ''
+                done = True
+                return f'<context>{new_ref}</context>'
+            m = {**m, 'content': CTX_TAG.sub(sub, c)}
+        out.append(m)
+    return out
+
+
 def rag_reference(evidence):
     """판정 근거 = LLM에 넣은 조각과 같은 텍스트."""
     return '\n\n'.join(e.text for e in evidence)
@@ -73,6 +95,11 @@ def extract(body, default_mode='pass', default_action='flag', default_stride=0, 
     coll = opts.get('collection')
     if coll is not None and (not isinstance(coll, str) or not coll):
         raise ValueError('verification.collection must be a non-empty string')
+    tr = opts.get('trim')
+    if tr is not None and not (isinstance(tr, bool) or (isinstance(tr, dict) and set(tr) <= {'top_k'}
+                                                         and isinstance(tr.get('top_k'), int) and not isinstance(tr.get('top_k'), bool)
+                                                         and 1 <= tr['top_k'] <= 32)):
+        raise ValueError('verification.trim must be true/false or {"top_k": 1..32}')
     pc = opts.get('post_check')
     if pc is not None and not isinstance(pc, bool):
         raise ValueError('verification.post_check must be a boolean')

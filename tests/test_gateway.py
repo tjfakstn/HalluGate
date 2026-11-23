@@ -1310,3 +1310,91 @@ async def test_admin_key_limits_accept_budget(tmp_path):
     assert ok.status_code == 200
     bad = await client.post('/admin/keys', json={'limits': {'budget_action': 'nope'}}, headers=A)
     assert bad.status_code == 400
+
+
+# ---------------- 근거 다이어트 (SPEC §2.9, A15) ----------------
+FILLER = [f'Unrelated note {i}: the weather station recorded rain and wind on day {i} near the old harbor bridge.'
+          for i in range(12)]
+LONG_REF = ' '.join(FILLER[:6]) + ' ' + DOC_A + ' ' + ' '.join(FILLER[6:])
+
+
+def test_trimmer_selects_relevant_in_order():
+    from hallugate.trim import Trimmer
+    t = Trimmer(HashEmb(), chunk_words=12, overlap=2)
+    kept, total = t.select(LONG_REF, 'When was the company founded and what was its revenue?', 2)
+    assert total > 2 and len(kept) == 2
+    assert any('founded in 1998' in c for c in kept) or any('revenue' in c for c in kept)
+    pos = [LONG_REF.find(c[:30]) for c in kept]
+    assert pos == sorted(pos)                                          # 원문 순서
+    kept2, total2 = t.select('short text only', 'q', 4)
+    assert kept2 == ['short text only'] and total2 == 1
+
+
+def _trim_body(resp, src='field', trim=True, stream=True):
+    q = 'When was the company founded and what was its revenue?'
+    if src == 'field':
+        msgs = [{'role': 'user', 'content': q}]
+        ver = {'context': LONG_REF, 'mode': 'hold', 'trim': trim}
+    else:
+        msgs = [{'role': 'system', 'content': 'Be brief.'}, {'role': 'user', 'content': f'<context>{LONG_REF}</context>\n{q}'}]
+        ver = {'mode': 'hold', 'trim': trim}
+    return {'model': 'mock', 'stream': stream, 'messages': msgs, 'verification': ver,
+            'mock_response': resp, 'mock_ttft_ms': 0, 'mock_token_ms': 0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('src', ['field', 'tag'])
+async def test_trim_sends_only_selected_chunks(tmp_path, src):
+    j = CapJudge(threshold=0.5)
+    client, s, st, sent = _rag_gw(tmp_path, judge=j, collection_chunk_words=12, collection_overlap=2)
+    r = await client.post('/v1/chat/completions', json=_trim_body(GOOD, src, {'top_k': 2}))
+    assert r.status_code == 200 and r.headers['x-verification-trim'].startswith('2/')
+    chunks = [json.loads(l[5:]) for l in r.text.splitlines() if l.startswith('data:') and not l.endswith('[DONE]')]
+    text = ''.join(ch['delta'].get('content') or '' for c in chunks for ch in c['choices'])
+    assert text == GOOD                                                # 본문 보존
+    info = next(c['verification'] for c in chunks if (c.get('verification') or {}).get('kind') == 'trim')
+    assert info['chunks_kept'] == 2 and info['chunks_total'] > 2 and 0 < info['chars_after'] < info['chars_before']
+    assert 0 < info['saved_ratio'] < 1 and info['top_k'] == 2
+    msgs = sent[-1]['messages']
+    sent_text = json.dumps(msgs)
+    assert 'Unrelated note 0:' not in sent_text or 'Unrelated note 11:' not in sent_text   # 다 보내지 않음
+    ref = j.refs[-1]
+    assert len(ref) == info['chars_after']                             # 판정 근거 = 고른 조각
+    if src == 'field':
+        assert msgs[0]['role'] == 'system' and all(p_ in msgs[0]['content'] for p_ in ref.split('\n\n'))
+        assert msgs[1:] == _trim_body(GOOD, src)['messages']
+    else:
+        assert msgs[0] == {'role': 'system', 'content': 'Be brief.'}
+        assert msgs[1]['content'] == f'<context>{ref}</context>\nWhen was the company founded and what was its revenue?'
+
+
+@pytest.mark.asyncio
+async def test_trim_noop_cases_and_validation(tmp_path):
+    j = CapJudge(threshold=0.5)
+    client, s, st, sent = _rag_gw(tmp_path, judge=j, collection_chunk_words=12, collection_overlap=2)
+    b = _trim_body(GOOD, 'tag', trim=False)                             # 끄면 그대로
+    await client.post('/v1/chat/completions', json=b)
+    assert sent[-1]['messages'] == b['messages'] and j.refs[-1] == LONG_REF
+    b = _trim_body(GOOD, 'tag', {'top_k': 32})                          # 조각 수 이하면 그대로
+    r = await client.post('/v1/chat/completions', json=b)
+    assert sent[-1]['messages'] == b['messages'] and r.headers['x-verification-trim'].split('/')[0] == r.headers['x-verification-trim'].split('/')[1]
+    nb = _trim_body(GOOD, 'field', stream=False)                       # 비스트리밍
+    v = (await client.post('/v1/chat/completions', json=nb)).json()['verification']
+    assert v['trim']['chunks_kept'] == s.collection_top_k == 2                 # 기본 조각 수 = COLLECTION_TOP_K
+    st.add('kb', DOC_A, doc_id='a')                                     # 컬렉션 요청에는 적용 안 함
+    rb = rag_body(GOOD); rb['verification']['trim'] = True
+    r = await client.post('/v1/chat/completions', json=rb)
+    assert r.status_code == 200 and 'x-verification-trim' not in r.headers
+    for bad in ['yes', {'top_k': 0}, {'top_k': 99}, {'k': 2}]:
+        b = _trim_body(GOOD); b['verification']['trim'] = bad
+        assert (await client.post('/v1/chat/completions', json=b)).status_code == 400, bad
+
+
+@pytest.mark.asyncio
+async def test_hosted_trim_recorded_without_text(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path, collection_chunk_words=12, collection_overlap=2)
+    _, k = ks.create('alice')
+    await _hc(client, k).post('/v1/chat/completions', json=_trim_body(GOOD, 'field', {'top_k': 2}))
+    row = _rows(s.keys_db)[-1]
+    assert row['trim_chunks_kept'] == 2 and row['trim_chars_after'] < row['trim_chars_before'] == len(LONG_REF)
+    assert 'harbor' not in json.dumps(row)

@@ -213,6 +213,7 @@ files.download(zp)
 nb = {"cells": cells, "metadata": {"accelerator": "GPU", "colab": {"provenance": [], "gpuType": "A100"},
       "kernelspec": {"display_name": "Python 3", "name": "python3"}, "language_info": {"name": "python"}},
       "nbformat": 4, "nbformat_minor": 0}
-out = os.path.join(NB_DIR, 'l3_combo_latency.ipynb')
-json.dump(nb, open(out, 'w'), ensure_ascii=False, indent=1)
-print('wrote', out, len(cells), 'cells')
+if __name__ == '__main__':          # 다른 builder가 불러올 때 노트북을 다시 쓰지 않게
+    out = os.path.join(NB_DIR, 'l3_combo_latency.ipynb')
+    json.dump(nb, open(out, 'w'), ensure_ascii=False, indent=1)
+    print('wrote', out, len(cells), 'cells')

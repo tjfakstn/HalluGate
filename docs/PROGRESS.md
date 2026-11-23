@@ -363,4 +363,14 @@
   - 예산: 키 한도 `monthly_tokens`·`monthly_usd`, `budget_action` warn(기본)/block. 응답 헤더 `x-budget-used`, 80% `near`, 100% `exceeded`, block이면 429 `insufficient_quota`. 데모 화면에 예산 경고 표시
 - **결과**: 테스트 77개 통과(가중치 필요 1개 건너뜀)
 - **주의**: 추정 비용은 단가표 기준, 캐시 할인 미반영. 단가표는 배포 전 공개 가격표로 확인 필요
-- **다음**: ② 근거 다이어트 명세·사전 기준
+- **다음**: ② 근거 다이어트 (아래 절)
+
+## 11/23 — 사용자 LLM 비용: ② 근거 다이어트 (SPEC §2.9) + T1 설계
+
+- **무엇**: 명세 §2.9·A15 + SSOT §6 T1 사전 기준 → 테스트 5개 → `hallugate/trim.py`(Trimmer), `context.py`(태그 바꾸기), `app.py`
+  - `verification.trim: true | {"top_k": n}`이면 긴 근거를 120단어 조각으로 나눠 질문과 가까운 top_k개(기본 4)만 원문 순서로 LLM에 보내고, **같은 조각으로 판정**(LLM이 본 근거 = 판정 근거 유지)
+  - `<context>` 태그 근거는 태그 내용을, `verification.context` 근거는 시스템 메시지로. 컬렉션 요청·짧은 근거는 바꾸지 않음
+  - `trim` 청크(전체·남긴 조각 수, 글자 수 전후, 절감률), 헤더 `x-verification-trim`, 운영 기록(원문 없음)
+- **T1 노트북** `t1_trim_savings.ipynb`(CPU): RAGTruth train QA 200개, L(원래 지문 + 다른 근거 7개)·S 조건, Haiku 생성(전체 vs 다이어트), Opus 쌍 비교(순서 가림)·충실성. 사전 기준: 입력 토큰 중앙값 −40% 이상, WORSE ≤ 10%(상한 ≤ 15%), 환각 응답 증가 ≤ +0.03(상한 < +0.08). 상한 $15. smoke로 채택·미달 확인
+- **결과**: 테스트 82개 통과. 절감·품질 수치는 T1 실행 전까지 없음
+- **실행에 필요한 것**: Colab CPU 런타임(컴퓨팅 단위 불필요) + `ANTHROPIC_API_KEY`

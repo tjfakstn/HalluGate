@@ -15,6 +15,7 @@ import json
 import os
 import time
 import uuid
+from types import SimpleNamespace
 from contextlib import asynccontextmanager
 
 import httpx
@@ -26,6 +27,7 @@ from .config import Settings
 from .pipeline import RequestRecord, VerifyPipeline, is_english
 from .limits import Limiter
 from .metrics import MetricsStore, parse_window, rejected, summarize
+from .trim import Trimmer
 from .postcheck import skipped
 from .splitter import IncrementalSplitter
 from .tokens import make_tokens
@@ -369,6 +371,18 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             'action': lm.get('budget_action', 'warn')}
         return {'window': window, **out}
 
+    def _trim_embedder():
+        # 근거 다이어트 임베더 = 컬렉션 검색과 같은 것 (SPEC §2.9)
+        if state['store'] is not None:
+            return state['store'].embedder
+        emb = getattr(state['judge'], 'embedder', None)
+        if hasattr(emb, 'encode') and not settings.collection_embedder:
+            return emb
+        if state.get('trim_emb') is None:
+            from sentence_transformers import SentenceTransformer
+            state['trim_emb'] = SentenceTransformer(settings.collection_embedder or 'sentence-transformers/all-MiniLM-L6-v2')
+        return state['trim_emb']
+
     def _lim(t, name, default):
         return int((t.limits or {}).get(name, default))
 
@@ -475,6 +489,26 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                 mode = 'off'                               # 질문이 비어 근거를 못 찾음 → 검증 없이 전달
         retrieve_ms = (time.perf_counter() - t_r) * 1000
 
+        # 근거 다이어트 (SPEC §2.9): 관련 조각만 LLM에 보내고 같은 조각으로 판정
+        trim_info, tr = None, opts.get('trim')
+        if tr and ref and not coll and mode != 'off':
+            k = tr['top_k'] if isinstance(tr, dict) else settings.collection_top_k
+            from_tag = not opts.get('context')
+            query = ctxmod.strip_context_tags(ctxmod.last_user_text(body))
+            trimmer = Trimmer(_trim_embedder(), settings.collection_chunk_words, settings.collection_overlap)
+            kept, total = await asyncio.to_thread(trimmer.select, ref, query, k)
+            new_ref = '\n\n'.join(kept) if total > k else ref
+            if total > k:
+                if from_tag:
+                    body['messages'] = ctxmod.replace_context_tags(body.get('messages', []), new_ref)
+                else:
+                    body['messages'] = ctxmod.rag_messages(body.get('messages', []),
+                                                           [SimpleNamespace(text=c) for c in kept])
+            trim_info = {'kind': 'trim', 'chunks_total': total, 'chunks_kept': min(total, k) if total > k else total,
+                         'chars_before': len(ref), 'chars_after': len(new_ref),
+                         'saved_ratio': round(1 - len(new_ref) / max(len(ref), 1), 4), 'top_k': k}
+            ref = new_ref
+
         client, judge = state['client'], state['judge']
         url = up_base.rstrip('/') + '/chat/completions'
         headers = _headers(request)
@@ -494,6 +528,10 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                     if tenant is not None else None)
         ev_info = ({'kind': 'evidence', 'collection': coll, 'retrieve_ms': retrieve_ms,
                     'evidence': [e.to_dict() for e in evidence]} if evidence else None)
+        if trim_info:
+            vh['x-verification-trim'] = f"{trim_info['chunks_kept']}/{trim_info['chunks_total']}"
+            rec.trim_chars_before, rec.trim_chars_after = trim_info['chars_before'], trim_info['chars_after']
+            rec.trim_chunks_kept, rec.trim_chunks_total = trim_info['chunks_kept'], trim_info['chunks_total']
 
         # ---------- 비스트리밍 ----------
         if not body.get('stream'):
@@ -550,6 +588,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                                     'prepare_ms': rec.prepare_ms, 'sentences': results, 'cut': rec.cut,
                                     'verified': rec.verified,
                                     **({'collection': coll, 'evidence': ev_info['evidence']} if ev_info else {}),
+                                    **({'trim': trim_info} if trim_info else {}),
                                     **({'reason': rec.unverified_reason} if not rec.verified else {})}
             if pc_on:
                 data['verification']['post_check'] = await _post_check(state['post_checker'], ref, content, rec, rec.cut,
@@ -618,6 +657,8 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                 yield chunk(delta={'role': 'assistant', 'content': ''})
                 if ev_info:                                       # 사용한 근거 조각을 본문보다 먼저 한 번 보낸다
                     yield chunk(verification=ev_info)
+                if trim_info:                                     # 근거 다이어트 결과 (SPEC §2.9)
+                    yield chunk(verification=trim_info)
                 pipe = VerifyPipeline(judge, ref_idx, mode, action, rec, stride=stride, tokens=tokens,
                                       threshold=thr, timeout_ms=settings.judge_timeout_ms)
                 async for ev in pipe.run(_upstream_deltas(resp, meta)):

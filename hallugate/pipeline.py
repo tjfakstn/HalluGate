@@ -69,6 +69,10 @@ class RequestRecord:
     cold: bool = False                 # 컨테이너 시작 직후 첫 요청 (SPEC §10.6)
     model: str = ''                    # 업스트림 응답 모델 (SPEC §10.10)
     usage: dict = None                 # 업스트림 토큰 사용량 (SPEC §10.10)
+    trim_chars_before: int = 0         # 근거 다이어트 (SPEC §2.9)
+    trim_chars_after: int = 0
+    trim_chunks_kept: int = 0
+    trim_chunks_total: int = 0
 
     def now(self):
         return (time.perf_counter() - self.t0) * 1000
