@@ -423,3 +423,11 @@
 - **맥 속도**: 조합 판정 1회 CPU p50 837ms, MPS p50 690ms(콜드), 예열 후 약 100~180ms → 실시간 서비스는 GPU 전제(A100 p95 61.3ms)
 - **데모(가짜 LLM + 실제 조합 판정기)**: "근거와 일치" 경고 없음, "근거에 없는 내용"·"근거와 모순"은 문제 문장만 환각(점수 3.77·3.34, 임계값 2.7385). 모순 문장은 문장이 끝나기 전 앞부분 판정에서 먼저 경보. 시연용 예제라 성능 수치로 쓰지 않음
 - 맥 로컬 실행: `JUDGE_MODEL_DIR=judge_combo JUDGE_DEVICE=mps JUDGE_TIMEOUT_MS=15000 python serve.py`
+
+## 11/23 — Modal 배포 준비 (진행 중)
+
+- Modal CLI 설치(`brew install modal`, 1.6.4)·로그인(워크스페이스 `tjfakstn`)
+- Volume `hallugate-models`·`hallugate-data` 생성, 판정기 폴더 `judge_combo`(약 1.1GB)를 `/judge_combo`로 업로드
+- Secret `hallugate`(ADMIN_TOKEN) 생성 — 관리자 토큰 원문은 맥 `~/.hallugate_admin_token`(권한 600)에만 저장, 화면·저장소에 남기지 않음
+- 배포 파일 수정: `add_local_python_source('hallugate')`는 저장소 루트가 import 경로에 없으면 패키지를 못 찾으므로 `add_local_dir`로 패키지 폴더를 그대로 넣음(데모 HTML·단가표 포함)
+- 이미지 빌드 성공(약 70초, 첫 시도는 Modal 쪽 외부 중단으로 재시도). **GPU(L4) 함수는 결제 수단 등록이 있어야 실행됨** → 사용자가 Modal에 결제 수단을 등록한 뒤 배포·측정(H8) 진행

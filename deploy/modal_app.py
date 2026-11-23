@@ -20,8 +20,8 @@ image = (
     .pip_install_from_requirements(os.path.join(ROOT, 'requirements.txt'))
     # 임베더·토크나이저 내려받기 캐시를 Volume에 둬 콜드 스타트 때 다시 받지 않게 한다
     .env({'HF_HOME': '/models/hf_cache', 'TIKTOKEN_CACHE_DIR': '/models/tiktoken_cache', 'PYTHONUNBUFFERED': '1'})
-    # ignore=[]: 기본값은 .py가 아닌 파일을 빼므로, 데모 화면(hallugate/static/demo.html)을 넣으려면 비워야 한다
-    .add_local_python_source('hallugate', ignore=['**/__pycache__/**'])
+    # 패키지 폴더를 그대로 넣는다(데모 화면 static/demo.html·단가표 prices.json 포함). /root는 컨테이너의 PYTHONPATH
+    .add_local_dir(os.path.join(ROOT, 'hallugate'), '/root/hallugate', ignore=['**/__pycache__/**'])
 )
 
 data = modal.Volume.from_name('hallugate-data', create_if_missing=True)       # /data: 키·컬렉션·기록 SQLite
