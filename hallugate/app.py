@@ -159,7 +159,11 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
 
     def _log(rec):
         if settings.hosted:
-            _emit(summarize(rec.to_dict(), rec.status, rec.stream, rec.cold))
+            row = summarize(rec.to_dict(), rec.status, rec.stream, rec.cold)
+            _emit(row)
+            if rec.tenant and row.get('tokens_in') is not None:     # 예산용 월 누적 (SPEC §10.10)
+                state['keys'].add_month_usage(rec.tenant, (row['tokens_in'] or 0) + (row['tokens_out'] or 0),
+                                              row.get('llm_cost_usd') or 0.0)
             return
         if settings.metrics_path:
             with open(settings.metrics_path, 'a') as f:
@@ -291,9 +295,9 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             return e
         b = await request.json() if await request.body() else {}
         limits = b.get('limits') or {}
-        if not isinstance(limits, dict) or not all(k in ('rpm', 'concurrent', 'post_check_daily') and isinstance(v, int)
-                                                   for k, v in limits.items()):
-            return _err('limits must be an object with integer rpm / concurrent / post_check_daily')
+        if not _valid_limits(limits):
+            return _err('limits: integer rpm / concurrent / post_check_daily / monthly_tokens, number monthly_usd, '
+                        'budget_action warn | block')
         kid, key = await asyncio.to_thread(state['keys'].create, str(b.get('name', '')), limits)
         return {'key_id': kid, 'key': key}
 
@@ -327,6 +331,44 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         await asyncio.to_thread(m.prune, settings.metrics_retention_days)
         return await asyncio.to_thread(m.stats, w, window)
 
+    def _valid_limits(lm):
+        if not isinstance(lm, dict):
+            return False
+        for k, v in lm.items():
+            if k in ('rpm', 'concurrent', 'post_check_daily', 'monthly_tokens'):
+                if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+                    return False
+            elif k == 'monthly_usd':
+                if not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0:
+                    return False
+            elif k == 'budget_action':
+                if v not in ('warn', 'block'):
+                    return False
+            else:
+                return False
+        return True
+
+    @app.get('/v1/usage')
+    async def usage(request: Request, window: str = '30d'):
+        # 사용자 본인 LLM 사용량·예산 (SPEC §10.10)
+        if not settings.hosted:
+            return _err('usage is available only in hosted mode', 404, 'not_found_error')
+        t, e = _tenant(request)
+        if e:
+            return e
+        try:
+            w = parse_window(window)
+        except ValueError as ex:
+            return _err(str(ex))
+        out = await asyncio.to_thread(state['metrics'].usage, t.key_id, w)
+        used, u = _budget(t)
+        lm = t.limits or {}
+        out['budget'] = None if used is None else {
+            'month': u['month'], 'used': round(used, 4), 'tokens_used': u['tokens'], 'cost_used_usd': round(u['cost_usd'], 6),
+            'monthly_tokens': lm.get('monthly_tokens'), 'monthly_usd': lm.get('monthly_usd'),
+            'action': lm.get('budget_action', 'warn')}
+        return {'window': window, **out}
+
     def _lim(t, name, default):
         return int((t.limits or {}).get(name, default))
 
@@ -344,7 +386,30 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             _emit(rejected(tenant.key_id, resp.status_code, request.headers.get('x-upstream', 'openai')))
         return resp
 
+    def _budget(tenant):
+        """이번 달 예산 사용 비율 (SPEC §10.10). 예산이 없으면 None."""
+        lm = tenant.limits or {}
+        if 'monthly_tokens' not in lm and 'monthly_usd' not in lm:
+            return None, None
+        u = state['keys'].month_usage(tenant.key_id)
+        fr = [u['tokens'] / lm['monthly_tokens'] if lm.get('monthly_tokens') else 0.0,
+              u['cost_usd'] / lm['monthly_usd'] if lm.get('monthly_usd') else 0.0]
+        return max(fr), u
+
     async def _limited_chat(request, tenant):
+        used, _ = _budget(tenant)
+        resp = await _limited_chat_inner(request, tenant, used)
+        if used is not None:
+            resp.headers['x-budget-used'] = f'{used:.3f}'
+            if used >= 1.0:
+                resp.headers['x-budget-warning'] = 'exceeded'
+            elif used >= 0.8:
+                resp.headers['x-budget-warning'] = 'near'
+        return resp
+
+    async def _limited_chat_inner(request, tenant, used):
+        if used is not None and used >= 1.0 and (tenant.limits or {}).get('budget_action') == 'block':
+            return _err('monthly budget exceeded', 429, 'insufficient_quota')
         # 운영 모드 한도 (SPEC §10.4): 분당 → 동시. 거절된 요청은 업스트림을 부르지 않는다
         lim = state['limiter']
         ra = lim.hit(tenant.key_id, _lim(tenant, 'rpm', settings.rate_rpm))
@@ -435,11 +500,16 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             r = await client.post(url, json=body, headers=headers)
             if r.status_code != 200 or mode == 'off':
                 if r.status_code == 200:                 # 검증을 끈 요청도 기록 (오류는 바깥에서 상태 코드로 기록)
+                    try:
+                        _d = r.json(); rec.usage, rec.model = _d.get('usage'), _d.get('model', '')
+                    except ValueError:
+                        pass
                     rec.t_client_done = rec.now()
                     _log(rec)
                     request.state.hg_logged = True
                 return Response(r.content, status_code=r.status_code, media_type='application/json', headers=vh)
             data = r.json()
+            rec.usage, rec.model = data.get('usage'), data.get('model', '')
             content = data['choices'][0]['message'].get('content') or ''
             thr = judge.threshold_for(0)                  # 비스트리밍은 문장 끝에서만 판정
             ref_idx = await _prepare(judge, ref, rec)
@@ -490,6 +560,11 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             return JSONResponse(data, headers=vh)
 
         # ---------- 스트리밍 ----------
+        wants_usage = bool((body.get('stream_options') or {}).get('include_usage'))
+        if tenant is not None:                           # 사용량 수집 (SPEC §10.10): 업스트림에는 항상 요청
+            body['stream_options'] = {**(body.get('stream_options') or {}), 'include_usage': True}
+        else:
+            wants_usage = True                           # 셀프호스팅: 업스트림이 보낸 그대로
         req = client.build_request('POST', url, json=body, headers=headers)
         resp = await client.send(req, stream=True)
         if resp.status_code != 200:
@@ -500,8 +575,23 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         if mode == 'off':
             async def passthrough():
                 try:
-                    async for chunk in resp.aiter_raw():
-                        yield chunk
+                    if tenant is None:
+                        async for chunk in resp.aiter_raw():
+                            yield chunk
+                    else:                                # 운영 모드: usage만 가로채고 나머지는 그대로 (SPEC §10.10)
+                        async for line in resp.aiter_lines():
+                            if line.startswith('data:') and line[5:].strip() != '[DONE]':
+                                try:
+                                    c = json.loads(line[5:])
+                                except ValueError:
+                                    c = {}
+                                rec.model = c.get('model') or rec.model
+                                if c.get('usage'):
+                                    rec.usage = c['usage']
+                                    if not c.get('choices') and not wants_usage:
+                                        continue
+                            if line:
+                                yield line + '\n\n'
                 finally:
                     await resp.aclose()
                     rec.t_client_done = rec.now()
@@ -546,7 +636,8 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                 if pc_on:                                         # 종료 청크 뒤, usage·[DONE] 앞에 1회 (SPEC §5.3)
                     yield chunk(verification=await _post_check(state['post_checker'], ref, delivered, rec, rec.cut,
                                                                settings.post_check_timeout_ms, pc_allow))
-                if meta.get('usage'):
+                rec.usage, rec.model = meta.get('usage'), meta.get('model') or ''
+                if meta.get('usage') and wants_usage:
                     yield _sse({**json.loads(chunk()[6:]), 'usage': meta['usage']})
                 yield 'data: [DONE]\n\n'
             finally:

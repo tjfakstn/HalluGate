@@ -352,6 +352,8 @@ async function send() {
       const why = { 401: '키가 없거나 올바르지 않습니다', 413: '근거·문서가 한도보다 깁니다', 429: `사용량 한도를 넘었습니다${r.headers.get('retry-after') ? ` (${r.headers.get('retry-after')}초 뒤 다시 시도)` : ''}` }[r.status];
       log('err', `<span class="tag bad">오류 ${r.status}</span>${why ? esc(why) + ' — ' : ''}${esc(msg)}`); return;
     }
+    const bw = r.headers.get('x-budget-warning'), bu = r.headers.get('x-budget-used');
+    if (bw) log('budget', `<span class="tag ${bw === 'exceeded' ? 'bad' : 'gray'}">예산</span>이번 달 예산 ${Math.round(parseFloat(bu) * 100)}% 사용${bw === 'exceeded' ? ' (초과)' : ''}`);
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
     while (true) {
       const { value, done } = await rd.read(); if (done) break;

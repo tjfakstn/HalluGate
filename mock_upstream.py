@@ -56,7 +56,8 @@ async def chat(request: Request):
         await asyncio.sleep(ttft + gap * len(_tokens(text)))
         return JSONResponse({'id': cid, 'object': 'chat.completion', 'created': created, 'model': model,
                              'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': text},
-                                          'finish_reason': 'stop'}]})
+                                          'finish_reason': 'stop'}],
+                             'usage': {'prompt_tokens': 3, 'completion_tokens': 7, 'total_tokens': 10}})
 
     def c(delta, finish=None):
         return 'data: ' + json.dumps({'id': cid, 'object': 'chat.completion.chunk', 'created': created,

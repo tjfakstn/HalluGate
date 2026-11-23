@@ -67,6 +67,8 @@ class RequestRecord:
     status: int = 200
     stream: bool = True
     cold: bool = False                 # 컨테이너 시작 직후 첫 요청 (SPEC §10.6)
+    model: str = ''                    # 업스트림 응답 모델 (SPEC §10.10)
+    usage: dict = None                 # 업스트림 토큰 사용량 (SPEC §10.10)
 
     def now(self):
         return (time.perf_counter() - self.t0) * 1000

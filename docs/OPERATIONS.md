@@ -82,6 +82,9 @@ python scripts/keys.py --url $HG create --name alice
 python scripts/keys.py --url $HG create --name heavy-user --limits '{"rpm": 60, "post_check_daily": 200}'
 ```
 ```bash
+python scripts/keys.py --url $HG create --name budgeted --limits '{"monthly_usd": 20, "budget_action": "block"}'
+```
+```bash
 python scripts/keys.py --url $HG list
 ```
 ```bash
@@ -98,6 +101,8 @@ stream = client.chat.completions.create(model="gpt-4o-mini", stream=True, messag
                                         extra_body={"verification": {"context": "<영어 근거 문서>"}})
 ```
 - 기본 한도: 분당 30요청, 동시 4개, 하루 2단 검증 50회, 근거 5만 자, 문서 200개(문서당 20만 자). 넘으면 429(`retry-after`) 또는 413
+- **LLM 사용량·예산**: 사용자는 `GET $HG/v1/usage?window=30d`(자기 키)로 모델별 토큰과 추정 비용, 이번 달 예산 상태를 본다. 키에 `monthly_tokens` 또는 `monthly_usd`를 주면 모든 응답에 `x-budget-used`가 붙고 80%에서 `x-budget-warning: near`, 100%에서 `exceeded`. `budget_action: block`이면 넘은 뒤 요청은 429 `insufficient_quota`
+- 추정 비용은 `hallugate/prices.json` 단가표로 계산한다(캐시 할인 미반영). **배포 전과 매달 업체 공개 가격표를 보고 갱신**한다
 - 사용자의 LLM 키는 고른 제공자에게만 넘기고 기록하지 않는다. 원문(근거·응답·질문)도 기록하지 않는다
 - 데모 화면: `$HG/demo` (게이트웨이 키·LLM 키는 그 브라우저 탭에만 보관)
 - `anthropic`은 Anthropic의 OpenAI SDK 호환 주소를 쓴다. Anthropic은 이 계층을 주로 시험·비교용으로 안내한다

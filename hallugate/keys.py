@@ -17,7 +17,14 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_id TEXT PRIMARY KEY, hash TEXT NOT NULL, name TEXT, created REAL NOT NULL, revoked REAL, limits TEXT);
 CREATE TABLE IF NOT EXISTS usage_daily (
     key_id TEXT NOT NULL, day TEXT NOT NULL, post_checks INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (key_id, day));
+CREATE TABLE IF NOT EXISTS usage_monthly (
+    key_id TEXT NOT NULL, month TEXT NOT NULL, tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (key_id, month));
 '''
+
+
+def _month():
+    return time.strftime('%Y-%m', time.gmtime())
 
 
 def _today():
@@ -101,6 +108,19 @@ class KeyStore:
             self._db.execute('INSERT INTO usage_daily (key_id, day, post_checks) VALUES (?,?,1) '
                              'ON CONFLICT(key_id, day) DO UPDATE SET post_checks = post_checks + 1', (key_id, day))
         return True
+
+    def add_month_usage(self, key_id, tokens, cost):
+        """이번 달(UTC) 사용자 LLM 사용량 누적 (예산, SPEC §10.10)."""
+        with self._lock, self._db:
+            self._db.execute('INSERT INTO usage_monthly VALUES (?,?,?,?) ON CONFLICT(key_id, month) DO UPDATE SET '
+                             'tokens = tokens + excluded.tokens, cost_usd = cost_usd + excluded.cost_usd',
+                             (key_id, _month(), int(tokens or 0), float(cost or 0.0)))
+
+    def month_usage(self, key_id):
+        with self._lock:
+            r = self._db.execute('SELECT tokens, cost_usd FROM usage_monthly WHERE key_id=? AND month=?',
+                                 (key_id, _month())).fetchone()
+        return {'month': _month(), 'tokens': r[0] if r else 0, 'cost_usd': r[1] if r else 0.0}
 
     def close(self):
         self._db.close()

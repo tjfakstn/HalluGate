@@ -1240,3 +1240,73 @@ def test_keys_cli_remote(tmp_path, capsys, monkeypatch):
     t = ks.verify(key); assert t.name == 'bob' and t.limits == {'rpm': 3}
     cli.main(['--url', 'http://gw', 'list']); assert t.key_id in capsys.readouterr().out
     cli.main(['--url', 'http://gw', 'revoke', t.key_id, '--purge']); assert ks.verify(key) is None
+
+
+# ---------------- 운영 모드: 사용자 LLM 사용량·예산 (SPEC §10.10, H9) ----------------
+def test_prices_lookup():
+    from hallugate.prices import cost_usd, price_for
+    assert price_for('gpt-4o-mini-2024-07-18') == price_for('gpt-4o-mini')          # 날짜 붙은 이름은 접두어로
+    assert price_for('gpt-4o-2024-08-06') != price_for('gpt-4o-mini')               # 가장 긴 접두어
+    assert price_for('unknown-model') is None and cost_usd('unknown-model', 10, 10) is None
+    pin, pout = price_for('gpt-4o-mini')
+    assert abs(cost_usd('gpt-4o-mini', 1_000_000, 2_000_000) - (pin + 2 * pout)) < 1e-9
+
+
+@pytest.mark.asyncio
+async def test_hosted_usage_collected_without_changing_output(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    _, k = ks.create('alice')
+    c = _hc(client, k)
+    b = body(GOOD, 'hold'); b['model'] = 'gpt-4o-mini'
+    _, out = await run_chunks(c, b)                                     # 사용자는 usage를 요청하지 않음
+    assert sent[-1]['stream_options'] == {'include_usage': True}       # 업스트림에는 요청
+    assert not any(x != 'DONE' and x.get('usage') for x in out)        # 사용자에게는 보내지 않음
+    b2 = dict(b, stream_options={'include_usage': True})
+    _, out2 = await run_chunks(c, b2)
+    assert any(x != 'DONE' and x.get('usage') for x in out2)           # 요청하면 그대로 보냄
+    await c.post('/v1/chat/completions', json=body(GOOD, 'hold', stream=False) | {'model': 'gpt-4o-mini'})
+    r, out3 = await run_chunks(c, body(GOOD, 'off') | {'model': 'gpt-4o-mini'})      # 검증 끔
+    assert not any(x != 'DONE' and x.get('usage') for x in out3)
+    rows = _rows(s.keys_db)
+    assert [(x['tokens_in'], x['tokens_out']) for x in rows] == [(3, 7)] * 4
+    assert all(x['model'] == 'gpt-4o-mini' and x['llm_cost_usd'] > 0 for x in rows)
+    u = (await c.get('/v1/usage?window=30d')).json()
+    assert u['requests'] == 4 and u['tokens_in'] == 12 and u['tokens_out'] == 28
+    assert u['by_model']['gpt-4o-mini']['requests'] == 4 and u['est_cost_usd'] > 0
+    assert (await client.get('/v1/usage')).status_code == 401
+    st_ = (await client.get('/admin/stats', headers={'Authorization': 'Bearer adm'})).json()
+    assert st_['llm']['tokens_in'] == 12 and st_['llm']['by_model']['gpt-4o-mini']['tokens_out'] == 28
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', ['warn', 'block'])
+async def test_hosted_budget(tmp_path, action):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    _, k = ks.create('alice', limits={'monthly_tokens': 15, 'budget_action': action})
+    c = _hc(client, k)
+    r1 = await c.post('/v1/chat/completions', json=body(GOOD, 'hold'))           # 요청마다 10토큰
+    assert r1.headers['x-budget-used'] == '0.000' and 'x-budget-warning' not in r1.headers
+    r2 = await c.post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    assert r2.headers['x-budget-used'] == '0.667' and 'x-budget-warning' not in r2.headers
+    n = len(sent)
+    r3 = await c.post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    if action == 'warn':
+        assert r3.status_code == 200 and r3.headers['x-budget-warning'] == 'exceeded' and len(sent) == n + 1
+    else:
+        assert r3.status_code == 429 and r3.json()['error']['type'] == 'insufficient_quota' and len(sent) == n
+    u = (await c.get('/v1/usage')).json()['budget']
+    assert u['monthly_tokens'] == 15 and u['tokens_used'] == (30 if action == 'warn' else 20) and u['action'] == action
+    # 예산 없는 키는 헤더만 없음
+    _, k2 = ks.create('bob')
+    r = await _hc(client, k2).post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    assert r.status_code == 200 and 'x-budget-used' not in r.headers
+
+
+@pytest.mark.asyncio
+async def test_admin_key_limits_accept_budget(tmp_path):
+    client, *_ = _hosted_gw(tmp_path)
+    A = {'Authorization': 'Bearer adm'}
+    ok = await client.post('/admin/keys', json={'limits': {'monthly_usd': 5.0, 'budget_action': 'block', 'rpm': 10}}, headers=A)
+    assert ok.status_code == 200
+    bad = await client.post('/admin/keys', json={'limits': {'budget_action': 'nope'}}, headers=A)
+    assert bad.status_code == 400

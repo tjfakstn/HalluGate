@@ -12,6 +12,8 @@ import time
 
 import numpy as np
 
+from .prices import cost_usd
+
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS requests (ts REAL NOT NULL, key_id TEXT, status INTEGER, data TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS requests_ts ON requests (ts);
@@ -48,7 +50,35 @@ def summarize(rec, status=200, stream=True, cold=False):
         'cut': rec.get('cut'), 'collection_used': bool(rec.get('collection')), 'n_evidence': rec.get('n_evidence', 0),
         'cold': bool(cold),
         'post_check': {k: pc[k] for k in PC_KEYS if k in pc} if isinstance(pc, dict) else None,
+        **llm_usage(rec.get('model'), rec.get('usage')),
     }
+
+
+def llm_usage(model, usage):
+    """업스트림 usage → 토큰 수·추정 비용 (SPEC §10.10). 사용량이 없으면 None."""
+    u = usage if isinstance(usage, dict) else {}
+    tin, tout = u.get('prompt_tokens'), u.get('completion_tokens')
+    cached = (u.get('prompt_tokens_details') or {}).get('cached_tokens')
+    return {'model': model or '', 'tokens_in': tin, 'tokens_out': tout, 'tokens_cached': cached,
+            'llm_cost_usd': cost_usd(model, tin, tout)}
+
+
+def _llm_totals(rows):
+    out = {'tokens_in': 0, 'tokens_out': 0, 'tokens_cached': 0, 'est_cost_usd': 0.0, 'by_model': {}}
+    for r in rows:
+        if r.get('tokens_in') is None:
+            continue
+        m = out['by_model'].setdefault(r.get('model') or '?', {'requests': 0, 'tokens_in': 0, 'tokens_out': 0, 'est_cost_usd': 0.0})
+        for d in (out, m):
+            d['tokens_in'] += r.get('tokens_in') or 0
+            d['tokens_out'] += r.get('tokens_out') or 0
+            d['est_cost_usd'] += r.get('llm_cost_usd') or 0.0
+        out['tokens_cached'] += r.get('tokens_cached') or 0
+        m['requests'] += 1
+    out['est_cost_usd'] = round(out['est_cost_usd'], 6)
+    for m in out['by_model'].values():
+        m['est_cost_usd'] = round(m['est_cost_usd'], 6)
+    return out
 
 
 def rejected(key_id, status, upstream='', stream=False, cold=False):
@@ -96,6 +126,11 @@ class MetricsStore:
             self._db.execute('DELETE FROM starts WHERE ts<?', (cut,))
         return n
 
+    def usage(self, key_id, window_s):
+        """사용자 본인 사용량 (GET /v1/usage, SPEC §10.10)."""
+        rows = [r for r in self.rows(time.time() - window_s) if r.get('key_id') == key_id and r.get('status') == 200]
+        return {'requests': len(rows), **_llm_totals(rows)}
+
     def purge(self, key_id):
         with self._lock, self._db:
             return self._db.execute('DELETE FROM requests WHERE key_id=?', (key_id,)).rowcount
@@ -129,6 +164,7 @@ class MetricsStore:
             'post_check': {'requested': len(pcs), 'runs': len(ran), 'flagged': sum(1 for p in ran if p.get('flagged')),
                            'quota': sum(1 for p in pcs if p.get('reason') == 'quota'), 'est_cost_usd': round(cost, 6)},
             'rate_limited': sum(1 for r in rows if r.get('status') == 429),
+            'llm': _llm_totals(ok),
             'cold_starts': [{**st, 'first_ttft_ms': next((r.get('ttft_ms') for r in ok if r.get('cold') and r['ts'] >= st['ts']), None)}
                             for st in starts],
         }
