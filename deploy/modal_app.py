@@ -5,7 +5,7 @@
 
 배포 (저장소 루트에서):
   modal deploy deploy/modal_app.py
-  HG_MIN_CONTAINERS=1 modal deploy deploy/modal_app.py     # 시연 날: 1대를 켜 둬 콜드 스타트 없앰
+쓸 때만 켜기 (재배포 없이): python scripts/warm.py up --hours 2 / down — auto_cooldown이 끌 시각에 자동으로 끈다
 배포 때만 읽는 값: HG_GPU(기본 L4), HG_MIN_CONTAINERS(0), SCALEDOWN_SECONDS(300), HG_MAX_INPUTS(32)
 """
 import os
@@ -55,6 +55,19 @@ def web():
         os.environ.setdefault(k, v)
     from hallugate import Settings, create_app
     return create_app(Settings())      # 판정기 로드·예열·콜드 스타트 기록은 FastAPI lifespan에서 (컨테이너 시작 때)
+
+
+# 쓸 때만 켜기의 자동 끄기 (SPEC §10.7): 작은 CPU 이미지로 10분마다 끌 시각을 확인한다
+cooldown_image = (modal.Image.debian_slim(python_version='3.12')
+                  .add_local_file(os.path.join(ROOT, 'scripts', 'warm.py'), '/root/warm.py'))
+
+
+@app.function(image=cooldown_image, schedule=modal.Period(minutes=10), timeout=120)
+def auto_cooldown():
+    import time
+    import warm
+    if warm.cooldown(warm.ModalBackend(), time.time()):
+        print('끌 시각이 지나 최소 0대로 되돌림')
 
 
 @app.function(volumes={'/models': models}, timeout=600)

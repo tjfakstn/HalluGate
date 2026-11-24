@@ -4,6 +4,7 @@
 
 - **대상**: 영어 RAG 응답만 검증한다(판정기가 영어로만 학습됨). 영어가 아니면 `verified: false, reason: "non_english"`로 본문은 그대로 전달
 - **구성**: GPU 컨테이너 1개(최소 0·최대 1)에 게이트웨이 + 조합 판정기. 요청이 없으면 5분 뒤 0대로 줄고 초당 과금
+- **쓸 때만 켠다**: 콜드 스타트가 3~8분(가끔 그 이상)이라, 쓰기 전에 `scripts/warm.py up`으로 켜 둔다(§2.1). 무료 크레딧 $30/월 안에서 한 달 약 34시간
 - **명령은 모두 저장소 루트에서 실행**한다
 
 ## 1. 처음 한 번 준비
@@ -65,7 +66,23 @@ curl $HG/health
 | `SCALEDOWN_SECONDS` | `300` | 요청이 없을 때 내리기까지(초) |
 | `HG_MAX_INPUTS` | `32` | 컨테이너 하나가 동시에 받는 요청 수 |
 
-예: `HG_MIN_CONTAINERS=1 modal deploy deploy/modal_app.py` (시연이 끝나면 기본값으로 다시 배포해 비용을 막는다)
+### 2.1 쓸 때만 켜기 (평소 운영)
+콜드 스타트(꺼진 상태에서 첫 요청)는 3~8분 걸린다(11/24 측정: 큰 이미지를 GPU 서버에 올리는 시간, SSOT §7). 상시 1대는 월 약 $630이라 쓰지 않는다. 쓰기 5~10분 전에 켜고, 끝나면 끈다.
+```bash
+python scripts/warm.py up --hours 2 --wait --url $HG
+```
+```bash
+python scripts/warm.py status
+```
+```bash
+python scripts/warm.py down
+```
+- `up`은 재배포 없이 최소 1대로 바꾸고 끌 시각을 적는다. `--wait`은 준비될 때까지 기다린다. 최대 12시간
+- 끄는 것을 잊어도 배포의 `auto_cooldown`(10분마다)이 끌 시각이 지나면 최소 0대로 되돌린다
+- 다시 배포하면 최소 0대로 돌아간다. 초대 사용자에게는 "쓰기 전에 알려 주면 켜 둔다"고 안내한다
+- **지출 상한**: Modal 대시보드 Settings → 사용량·결제 화면에서 워크스페이스 지출 상한을 $30(무료 크레딧)으로 건다. 계정 주인이 직접 한다
+
+예외적으로 하루 종일 켜야 하면 `HG_MIN_CONTAINERS=1 modal deploy deploy/modal_app.py` (끝나면 기본값으로 다시 배포)
 
 **되돌리기**: `modal app history hallugate`로 버전을 보고 `modal app rollback hallugate <버전>`.
 
@@ -135,7 +152,7 @@ modal app logs hallugate -f
 | `/health`가 안 뜸, 모든 요청 5xx | `modal app logs hallugate` — 판정기 로딩 오류(가중치 경로·설정), 패키지 설치 오류 | `check_models`로 Volume 확인 → 고친 뒤 다시 배포, 급하면 `modal app rollback` |
 | `unverified`가 `judge_error`·`judge_timeout`으로 늘어남 | 로그의 판정기 예외, `judge_ms_p95` | 본문은 fail-open으로 그대로 나가고 있음(사용자 영향은 "검증 안 됨"). GPU 메모리 부족이면 `HG_MAX_INPUTS` 낮추기 |
 | 특정 업스트림만 4xx·5xx | `by_status`·`by_upstream`, 업스트림 상태 페이지 | 게이트웨이 문제 아님. 사용자 키 오류(401)는 사용자에게 안내 |
-| 첫 요청이 매우 느림 | `cold_starts` | 정상(서버리스). 중요한 시간대만 최소 1대 |
+| 첫 요청이 매우 느림(3분 이상) | `cold_starts`, `python scripts/warm.py status` | 정상(서버리스 콜드 스타트). 쓰기 전에 `warm.py up` |
 | 비용 급증 | Modal Usage, `post_check.est_cost_usd`, `by_key` | 원인 키의 한도를 낮추거나 폐기. `SCALEDOWN_SECONDS`가 너무 길지 않은지 |
 | 키 유출 | 사용자 신고, `by_key` 급증 | 즉시 `revoke`, 새 키 발급 |
 | 관리자 토큰 유출 | — | Secret의 `ADMIN_TOKEN`을 바꾸고 다시 배포 |
@@ -158,7 +175,8 @@ modal app logs hallugate -f
 
 ## 7. 비용 감각 (추정, 실측으로 갱신)
 
-- GPU: L4 약 $0.80/시간(공개 자료) + CPU·메모리. 컨테이너가 떠 있는 시간에만 과금 → (하루 사용 시간 + 요청마다 `SCALEDOWN_SECONDS` 대기) × 단가
-- 예: 하루 1시간 쓰고 나머지는 꺼짐 → 하루 약 $1 내외. 최소 1대를 하루 종일 켜 두면 약 $20 이상
+- 단가(Modal 가격표 11/24, 초당 값을 시간당으로 환산): L4 약 $0.80, A10 약 $1.10, T4 약 $0.59 + CPU 약 $0.047/코어·메모리 약 $0.008/GiB. 컨테이너가 떠 있는 시간에만 과금
+- 무료 요금제(Starter)는 매달 $30 크레딧 → L4 컨테이너 기준 한 달 약 34시간(추정). 상시 1대는 약 $630/월이라 쓰지 않는다
+- `auto_cooldown`은 작은 CPU 함수라 10분마다 몇 초씩만 돈다(무시할 수준)
 - 2단 검증: 응답마다 Claude Sonnet 3회 호출, `/admin/stats`의 추정 비용으로 확인
 - 실제 수치는 배포 후 H8 측정으로 SSOT에 기록한다

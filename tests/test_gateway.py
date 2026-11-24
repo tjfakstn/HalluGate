@@ -1401,3 +1401,59 @@ async def test_hosted_trim_recorded_without_text(tmp_path):
     row = _rows(s.keys_db)[-1]
     assert row['trim_chunks_kept'] == 2 and row['trim_chars_after'] < row['trim_chars_before'] == len(LONG_REF)
     assert 'harbor' not in json.dumps(row)
+
+
+# ---------------- 쓸 때만 켜기 (SPEC §10.7) ----------------
+class _FakeWarm:
+    """scripts/warm.py의 Modal 연결을 대신한다: 최소 컨테이너 수와 Dict를 메모리에 둔다."""
+    def __init__(self):
+        self.min, self.state, self.health = 0, {}, []
+
+    def set_min(self, n):
+        self.min = n
+
+    def get(self, k):
+        return self.state.get(k)
+
+    def put(self, k, v):
+        self.state[k] = v
+
+    def pop(self, k):
+        self.state.pop(k, None)
+
+    def ping(self, url):
+        self.health.append(url)
+        return True
+
+
+def _warm_cli():
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location('warm_cli', os.path.join(root, 'scripts', 'warm.py'))
+    cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+    return cli
+
+
+def test_warm_up_down_status(capsys):
+    cli = _warm_cli(); b = _FakeWarm(); cli.BACKEND = b; cli.NOW = lambda: 1000.0
+    cli.main(['up'])
+    assert b.min == 1 and b.state['until'] == 1000.0 + 2 * 3600            # 기본 2시간
+    cli.main(['up', '--hours', '0.5'])
+    assert b.min == 1 and b.state['until'] == 1000.0 + 1800                 # 다시 켜면 끌 시각만 새로
+    capsys.readouterr(); cli.main(['status']); assert '30' in capsys.readouterr().out
+    cli.main(['down'])
+    assert b.min == 0 and 'until' not in b.state
+    for bad in ['0', '-1', '13']:                                           # 0 < h ≤ 12
+        with pytest.raises(SystemExit):
+            cli.main(['up', '--hours', bad])
+    assert b.min == 0
+    cli.main(['up', '--wait', '--url', 'https://gw.example'])
+    assert b.health == ['https://gw.example']
+
+
+def test_warm_auto_cooldown():
+    cli = _warm_cli(); b = _FakeWarm()
+    b.min, b.state = 1, {'until': 5000.0}
+    assert cli.cooldown(b, now=4999.0) is False and b.min == 1              # 아직
+    assert cli.cooldown(b, now=5001.0) is True and b.min == 0 and 'until' not in b.state
+    assert cli.cooldown(b, now=9999.0) is False                              # 켠 적 없으면 그대로
