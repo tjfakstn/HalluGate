@@ -1502,3 +1502,102 @@ async def test_hosted_pages(tmp_path, path, needs):
         Settings(upstream_base_url='http://mock/v1', metrics_path='', collection_db=''), judge=LexicalJudge(), http_client=up)),
         base_url='http://gw')
     assert (await plain.get(path)).status_code == 404                              # 운영 모드 전용
+
+
+# ---------------- 요청 추적 (SPEC §10.12) ----------------
+@pytest.mark.asyncio
+async def test_hosted_trace_off_by_default_and_on(tmp_path, capsys):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    _, k = ks.create('alice')
+    plain = _hc(client, k, Authorization='Bearer user-llm-key-123')
+    r = await plain.post('/v1/chat/completions', json=body(BAD_2ND, 'hold'))
+    assert r.status_code == 200 and 'x-hallugate-trace-id' not in r.headers
+    assert (await plain.get('/v1/traces')).json()['traces'] == []           # 기본은 아무것도 남기지 않음
+
+    tc = _hc(client, k, Authorization='Bearer user-llm-key-123', **{'x-hallugate-trace': '1'})
+    r = await tc.post('/v1/chat/completions', json=body(BAD_2ND, 'hold'))   # 스트리밍
+    tid = r.headers['x-hallugate-trace-id']
+    lst = (await plain.get('/v1/traces')).json()['traces']
+    assert [x['id'] for x in lst] == [tid]
+    assert lst[0]['n_sentences'] == 3 and lst[0]['n_flagged'] == 1 and lst[0]['preview'] == 'q' and lst[0]['stream']
+    d = (await plain.get(f'/v1/traces/{tid}')).json()
+    assert d['request']['messages'] == [{'role': 'user', 'content': 'q'}] and d['request']['model'] == 'mock'
+    assert d['verification']['context'] == REF and d['reference'] == REF and d['response'] == BAD_2ND
+    bad = [x for x in d['sentences'] if x['hallucinated']]
+    assert len(d['sentences']) == 3 and len(bad) == 1 and 'flew rockets' in bad[0]['text'] and 'score' in bad[0]
+    assert d['summary']['n_flagged'] == 1 and d['status'] == 200
+
+    await tc.post('/v1/collections/kb/documents', json={'text': DOC_A, 'doc_id': 'a'})
+    r = await tc.post('/v1/chat/completions', json=rag_body(GOOD))          # 컬렉션: 근거가 들어간 메시지
+    d = (await plain.get(f"/v1/traces/{r.headers['x-hallugate-trace-id']}")).json()
+    assert 'founded in 1998' in json.dumps(d['request']['messages']) and d['evidence'] and d['evidence'][0]['text']
+    assert d['request']['messages'] == [{k_: v for k_, v in m.items()} for m in sent[-1]['messages']]   # LLM이 받은 그대로
+
+    r = await tc.post('/v1/chat/completions', json=body(BAD_2ND, 'hold', stream=False))   # 비스트리밍
+    d = (await plain.get(f"/v1/traces/{r.headers['x-hallugate-trace-id']}")).json()
+    assert d['response'] == BAD_2ND and sum(x['hallucinated'] for x in d['sentences']) == 1 and not d['stream']
+    for st_ in (True, False):                                               # 검증 끔도 입력·응답은 남김
+        r = await tc.post('/v1/chat/completions', json=body(GOOD, 'off', stream=st_))
+        d = (await plain.get(f"/v1/traces/{r.headers['x-hallugate-trace-id']}")).json()
+        assert d['response'] == GOOD and d['sentences'] == [] and d['mode'] == 'off'
+
+    dump = json.dumps((await plain.get('/v1/traces')).json())
+    for tid_ in [x['id'] for x in (await plain.get('/v1/traces')).json()['traces']]:
+        dump += json.dumps((await plain.get(f'/v1/traces/{tid_}')).json())
+    for secret in ['user-llm-key-123', k, k.split('_', 2)[2]]:
+        assert secret not in dump, secret                                   # 헤더·키는 추적에도 없음
+    rows = _rows(s.keys_db)
+    assert [r_.get('traced') for r_ in rows if r_['status'] == 200] == [False, True, True, True, True, True]
+    logs = json.dumps(rows) + capsys.readouterr().out
+    for secret in ['flew rockets', 'founded in 1998', 'user-llm-key-123']:
+        assert secret not in logs, secret                                   # 측정 기록·표준 출력은 여전히 원문 없음
+
+
+@pytest.mark.asyncio
+async def test_hosted_trace_isolation_delete_limits(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path, trace_max_per_key=2, trace_max_chars=40)
+    _, ka = ks.create('alice'); _, kb = ks.create('bob')
+    kid_a = ks.list()[0]['key_id']
+    a = _hc(client, ka, **{'x-hallugate-trace': '1'}); b = _hc(client, kb)
+    ids = []
+    for _ in range(3):
+        ids.append((await a.post('/v1/chat/completions', json=body(GOOD, 'hold'))).headers['x-hallugate-trace-id'])
+    lst = [x['id'] for x in (await a.get('/v1/traces')).json()['traces']]
+    assert lst == [ids[2], ids[1]]                                          # 키당 최근 2개, 최근 순
+    d = (await a.get(f'/v1/traces/{ids[2]}')).json()
+    assert len(d['response']) == 40 and d['truncated']                      # 긴 값은 자름
+    assert (await b.get(f'/v1/traces/{ids[2]}')).status_code == 404         # 다른 사용자는 못 봄
+    assert (await b.delete(f'/v1/traces/{ids[2]}')).json()['deleted'] == 0
+    assert (await b.get('/v1/traces')).json()['traces'] == []
+    assert (await client.get('/v1/traces')).status_code == 401
+    assert (await a.get('/v1/traces?limit=0')).status_code == 400
+    assert (await a.delete(f'/v1/traces/{ids[2]}')).json()['deleted'] == 1
+    await a.post('/v1/chat/completions', json=body(GOOD, 'hold'))
+    st_ = (await client.get('/admin/stats', headers={'Authorization': 'Bearer adm'})).json()
+    assert st_['traces'] == 4 and 'founded in 1998' not in json.dumps(st_)            # 관리자는 추적 켠 요청 수만
+    r = await client.post(f'/admin/keys/{kid_a}/revoke', json={'purge': True}, headers={'Authorization': 'Bearer adm'})
+    assert r.json()['purged_traces'] == 2
+
+    import time as _t
+    from hallugate.traces import TraceStore
+    ts = TraceStore(s.keys_db)
+    ts.add('x', {'status': 200}, ts=_t.time() - 8 * 86400); ts.add('x', {'status': 200})
+    assert ts.prune(7) == 1 and len(ts.list('x', 50)) == 1
+
+
+@pytest.mark.asyncio
+async def test_hosted_trace_upstream_error(tmp_path):
+    from hallugate.keys import KeyStore
+    up = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda req: httpx.Response(400, json={'error': {'message': 'model not found: gpt-nope'}})))
+    s = Settings(hosted=True, keys_db=str(tmp_path / 'k.sqlite3'), stride_tokenizer='words', admin_token='adm',
+                 upstream_allowlist='openai=http://up/v1')
+    ks = KeyStore(s.keys_db); _, k = ks.create('alice')
+    app = create_app(s, judge=CapJudge(threshold=0.5), http_client=up, store=_store(tmp_path), keys=ks)
+    c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://gw',
+                          headers={**_K(k), 'x-hallugate-trace': '1'})
+    for stream in (True, False):
+        r = await c.post('/v1/chat/completions', json=body(GOOD, 'hold', stream=stream))
+        assert r.status_code == 400
+        d = (await c.get(f"/v1/traces/{r.headers['x-hallugate-trace-id']}")).json()
+        assert d['status'] == 400 and 'gpt-nope' in d['error'] and d['request']['messages'][0]['content'] == 'q'

@@ -48,7 +48,7 @@ def summarize(rec, status=200, stream=True, cold=False):
         'n_flagged': sum(1 for x in sents if x.get('hallucinated')), 'judge_ms_max': max(jms) if jms else None,
         'judge_ms_p95': _pct(jms, 95), 'verified': rec.get('verified'), 'unverified_reason': rec.get('unverified_reason') or '',
         'cut': rec.get('cut'), 'collection_used': bool(rec.get('collection')), 'n_evidence': rec.get('n_evidence', 0),
-        'cold': bool(cold),
+        'cold': bool(cold), 'traced': bool(rec.get('trace_id')),
         'trim_chars_before': rec.get('trim_chars_before', 0), 'trim_chars_after': rec.get('trim_chars_after', 0),
         'trim_chunks_kept': rec.get('trim_chunks_kept', 0), 'trim_chunks_total': rec.get('trim_chunks_total', 0),
         'post_check': {k: pc[k] for k in PC_KEYS if k in pc} if isinstance(pc, dict) else None,
@@ -194,6 +194,7 @@ class MetricsStore:
             'llm': _llm_totals(ok),
             'verification': _verify_totals(ok),
             'trim': _trim_totals(ok),
+            'traces': sum(1 for r in ok if r.get('traced')),    # 추적을 켠 요청 수만 (원문은 운영자에게 안 보임, SPEC §10.12)
             'cold_starts': [{**st, 'first_ttft_ms': next((r.get('ttft_ms') for r in ok if r.get('cold') and r['ts'] >= st['ts']), None)}
                             for st in starts],
         }

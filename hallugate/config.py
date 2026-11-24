@@ -75,6 +75,10 @@ class Settings:
     max_ref_chars: int = field(default_factory=lambda: _env('MAX_REF_CHARS', 50000, int))
     metrics_retention_days: int = field(default_factory=lambda: _env('METRICS_RETENTION_DAYS', 30, int))
     max_doc_chars: int = field(default_factory=lambda: _env('MAX_DOC_CHARS', 200000, int))
+    # 요청 추적 (SPEC §10.12): x-hallugate-trace: 1인 요청만 원문 상세 저장
+    trace_retention_days: int = field(default_factory=lambda: _env('TRACE_RETENTION_DAYS', 7, int))
+    trace_max_per_key: int = field(default_factory=lambda: _env('TRACE_MAX_PER_KEY', 200, int))
+    trace_max_chars: int = field(default_factory=lambda: _env('TRACE_MAX_CHARS', 60000, int))
 
     # 근거 다이어트 기본 조각 수 (SPEC §2.9). T1c 채택값 8 (top_k 4는 T1b에서 충실성 미달)
     trim_top_k: int = field(default_factory=lambda: _env('TRIM_TOP_K', 8, int))

@@ -78,6 +78,28 @@ form.newkey input, form.newkey select { width: 100%; }
 .budget .fill.over { background: var(--bad-ink); }
 .tips { margin: 0; padding-left: 18px; font-size: 13px; }
 .tips li { margin: 4px 0; }
+.tr-list tr.row { cursor: pointer; }
+.tr-list tr.row:hover td { background: var(--soft); }
+.tr-list tr.sel td { background: var(--soft); }
+.tr-list td { white-space: nowrap; }
+.tr-list td.q { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill.bad { background: var(--bad-bg); color: var(--bad-ink); }
+.pill.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.detail { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; display: none; }
+.detail.show { display: block; }
+.detail h3 { font-size: 13px; margin: 16px 0 6px; }
+.detail h3:first-child { margin-top: 0; }
+.dhead { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.dhead .sp { margin-left: auto; display: flex; gap: 6px; }
+.msgbox { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; overflow: hidden; }
+.msgbox .role { font-size: 11px; font-weight: 600; padding: 3px 8px; background: var(--soft); color: var(--muted); display: flex; justify-content: space-between; }
+pre.txt { margin: 0; padding: 8px 10px; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); max-height: 320px; overflow: auto; }
+.resp { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap; word-break: break-word; line-height: 1.7; }
+.resp .s-ok { background: var(--ok-bg); border-radius: 3px; }
+.resp .s-bad { background: var(--bad-bg); color: var(--bad-ink); border-radius: 3px; text-decoration: underline wavy; text-decoration-thickness: 1px; }
+.resp sup { font-size: 10px; color: var(--muted); margin-left: 1px; }
+details > summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 4px 0; }
+.howto code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -107,7 +129,14 @@ form.newkey input, form.newkey select { width: 100%; }
     <div class="card"><h2>LLM 사용량 (모델별, 추정 비용)</h2><div class="scroll" id="t-llm"></div></div>
     <div class="card"><h2>참고</h2><ul class="tips" id="tips"></ul></div>
   </div>
-  <p class="muted">추정 비용은 공개 단가표로 계산한 값이며 캐시 할인을 반영하지 않아 실제 청구액보다 클 수 있습니다. 질문·근거·응답 원문은 기록하지 않고 숫자만 남깁니다(30일 보관).</p>
+  <div class="card wide">
+    <div class="dhead"><h2 style="margin:0">요청 기록 <span class="muted">(추적을 켠 요청만, 최근 50개)</span></h2>
+      <span class="sp"><button id="tr-reload">새로고침</button><button class="danger" id="tr-clear">전체 지우기</button></span></div>
+    <div class="howto muted" id="tr-howto" style="margin:6px 0 8px">요청 헤더에 <code>x-hallugate-trace: 1</code>을 붙이면 그 요청의 LLM 입력 메시지·검증 근거·문장별 판정·응답이 여기에 남습니다(7일 보관, 나만 볼 수 있음). OpenAI SDK는 <code>extra_headers={"x-hallugate-trace": "1"}</code>, 데모는 "콘솔에 기록 남기기"를 켜세요.</div>
+    <div class="scroll tr-list" id="tr-list"></div>
+    <div class="detail" id="tr-detail"></div>
+  </div>
+  <p class="muted">추정 비용은 공개 단가표로 계산한 값이며 캐시 할인을 반영하지 않아 실제 청구액보다 클 수 있습니다. 위 통계는 원문 없이 숫자만 남깁니다(30일 보관). 원문은 추적을 켠 요청만, 요청 기록에 7일 보관합니다.</p>
 </main>
 
 <script>
@@ -181,6 +210,7 @@ async function load() {
     if (r.status === 401) throw new Error('게이트웨이 키가 없거나 틀렸습니다.');
     if (!r.ok) throw new Error('/v1/usage → ' + r.status);
     render(await r.json());
+    loadTraces();
     $('when').textContent = `최근 ${WIN} · ${new Date().toLocaleTimeString('ko-KR')} 기준`;
   } catch (e) { msg(e.message, 'err'); }
   finally { $('load').disabled = false; }
@@ -189,6 +219,117 @@ document.querySelectorAll('#win button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#win button').forEach(x => x.classList.toggle('on', x === b));
   WIN = b.dataset.w; if ($('key').value.trim()) load();
 });
+
+// ---------- 요청 기록 (SPEC §10.12) ----------
+let TR_SEL = location.hash.slice(1) || null;
+const fmtMs = x => x == null ? '–' : (x >= 1000 ? (x / 1000).toFixed(2) + 's' : x < 10 ? x.toFixed(1) + 'ms' : Math.round(x) + 'ms');
+const fmtTime = ts => new Date(ts * 1000).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const hdr = () => ({ 'x-hallugate-key': $('key').value.trim() });
+function pill(text, cls) { return el('span', { class: 'pill ' + cls }, text); }
+function verdictPill(t) {
+  if (t.status !== 200) return pill('오류 ' + t.status, 'bad');
+  if (t.mode === 'off') return pill('검증 끔', 'off');
+  if (t.n_flagged) return pill(`환각 ${t.n_flagged}/${t.n_sentences}`, 'bad');
+  if (t.verified === false) return pill('검증 중단', 'warn');
+  return pill(`통과 ${t.n_sentences}문장`, 'ok');
+}
+
+async function loadTraces() {
+  const r = await fetch('/v1/traces?limit=50', { headers: hdr() });
+  if (!r.ok) { $('tr-list').replaceChildren(el('div', { class: 'empty' }, '요청 기록을 불러오지 못했습니다 (' + r.status + ').')); return; }
+  const list = (await r.json()).traces;
+  if (!list.length) { $('tr-list').replaceChildren(el('div', { class: 'empty' }, '아직 기록이 없습니다. 위 안내대로 추적을 켠 요청만 남습니다.')); $('tr-detail').className = 'detail'; return; }
+  const rows = list.map(t => {
+    const tr = el('tr', { class: 'row' + (t.id === TR_SEL ? ' sel' : ''), 'data-id': t.id },
+      el('td', { class: 'n' }, fmtTime(t.ts)), el('td', {}, verdictPill(t)), el('td', {}, t.model || ''),
+      el('td', {}, (t.mode || '') + (t.stream ? ' · 스트리밍' : '')), el('td', { class: 'q', title: t.preview || '' }, t.preview || '(질문 없음)'));
+    tr.onclick = () => openTrace(t.id);
+    return tr;
+  });
+  $('tr-list').replaceChildren(el('table', {}, el('thead', {}, el('tr', {}, ...['시각', '결과', '모델', '방식', '질문'].map((h, i) => el('th', { class: i ? '' : 'n' }, h)))), el('tbody', {}, ...rows)));
+  if (TR_SEL && list.some(t => t.id === TR_SEL)) openTrace(TR_SEL, false);
+}
+
+function msgBox(role, content, extra) {
+  const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+  return el('div', { class: 'msgbox' }, el('div', { class: 'role' }, el('span', {}, role), el('span', {}, `${fmtN(text.length)}자${extra ? ' · ' + extra : ''}`)), el('pre', { class: 'txt' }, text));
+}
+
+function responseView(text, sents) {
+  const box = el('div', { class: 'resp' });
+  const ss = (sents || []).filter(s => s.start != null).sort((a, b) => a.start - b.start);
+  if (!ss.length) { box.textContent = text || '(빈 응답)'; return box; }
+  let pos = 0;
+  ss.forEach((s, i) => {
+    if (s.start > pos) box.append(text.slice(pos, s.start));
+    const end = i + 1 < ss.length ? ss[i + 1].start : text.length;
+    const span = el('span', { class: s.hallucinated ? 's-bad' : 's-ok', title: `점수 ${s.score?.toFixed?.(3)} · 판정 ${fmtMs(s.judge_ms)}` }, text.slice(s.start, end).replace(/\s+$/, ''));
+    box.append(span, el('sup', {}, s.score == null ? '' : s.score.toFixed(2)));
+    const tail = text.slice(s.start, end).match(/\s+$/); if (tail) box.append(tail[0]);
+    pos = end;
+  });
+  if (pos < text.length) box.append(text.slice(pos));
+  return box;
+}
+
+async function openTrace(id, scroll = true) {
+  TR_SEL = id; history.replaceState(null, '', '#' + id);
+  const r = await fetch('/v1/traces/' + encodeURIComponent(id), { headers: hdr() });
+  if (!r.ok) { $('tr-detail').className = 'detail show'; $('tr-detail').replaceChildren(el('div', { class: 'empty' }, '이 기록을 찾을 수 없습니다 (지워졌거나 보관 기간이 지남).')); return; }
+  const d = await r.json(), sm = d.summary || {}, rq = d.request || {};
+  const parts = [];
+  const del = el('button', { class: 'danger' }, '이 기록 지우기');
+  del.onclick = async () => { if (!confirm('이 기록을 지울까요?')) return; await fetch('/v1/traces/' + encodeURIComponent(id), { method: 'DELETE', headers: hdr() }); TR_SEL = null; history.replaceState(null, '', location.pathname); $('tr-detail').className = 'detail'; loadTraces(); };
+  const cp = el('button', {}, 'JSON 복사');
+  cp.onclick = async () => { try { await navigator.clipboard.writeText(JSON.stringify(d, null, 2)); cp.textContent = '복사됨'; } catch (e) { cp.textContent = '복사 실패'; } setTimeout(() => cp.textContent = 'JSON 복사', 1500); };
+  parts.push(el('div', { class: 'dhead' }, verdictPill(d), el('b', {}, fmtTime(d.ts)), el('span', { class: 'muted' }, d.id), el('span', { class: 'sp' }, cp, del)));
+  if (d.truncated) parts.push(el('div', { class: 'muted' }, '일부 긴 값은 저장 한도에서 잘렸습니다.'));
+
+  parts.push(el('h3', {}, '요약'));
+  parts.push(el('div', { class: 'kpis' },
+    kpi('토큰', `${fmtN(sm.tokens_in)} → ${fmtN(sm.tokens_out)}`, '입력 → 출력'),
+    kpi('추정 비용', fmtUsd(sm.llm_cost_usd), d.model || ''),
+    kpi('첫 글자', fmtMs(sm.ttft_ms), `LLM 첫 토큰 ${fmtMs(sm.upstream_first_ms)}`),
+    kpi('전체 시간', fmtMs(sm.total_ms), `LLM 끝 ${fmtMs(sm.upstream_done_ms)}`),
+    kpi('판정 시간 p95', fmtMs(sm.judge_ms_p95), `${fmtN(sm.n_judgments)}회 판정`),
+    kpi('검증', d.mode === 'off' ? '끔' : sm.verified === false ? '중단' : '완료', sm.unverified_reason ? (REASONS[sm.unverified_reason] || sm.unverified_reason) : `${d.mode || ''}${sm.action ? ' · ' + sm.action : ''}`, sm.verified === false ? 'warn' : '')));
+  if (d.error) { parts.push(el('h3', {}, 'LLM 오류 응답')); parts.push(el('pre', { class: 'txt' }, d.error)); }
+
+  parts.push(el('h3', {}, `LLM에 보낸 메시지 (${(rq.messages || []).length}개)`));
+  parts.push(el('div', { class: 'muted', style: 'margin-bottom:6px' }, '게이트웨이가 컬렉션 근거를 넣거나 근거 다이어트로 줄인 뒤, 실제로 LLM에 간 그대로입니다.'));
+  (rq.messages || []).forEach((m, i) => parts.push(msgBox(`${i + 1}. ${m.role}`, m.content ?? m)));
+  const params = Object.fromEntries(Object.entries(rq).filter(([k]) => k !== 'messages'));
+  if (Object.keys(params).length) parts.push(el('details', {}, el('summary', {}, '요청 매개변수'), el('pre', { class: 'txt' }, JSON.stringify(params, null, 2))));
+  if (d.verification) parts.push(el('details', {}, el('summary', {}, 'verification 옵션 (LLM에는 안 감)'), el('pre', { class: 'txt' }, JSON.stringify(d.verification, null, 2))));
+
+  if (d.reference || (d.evidence || []).length || d.trim) {
+    parts.push(el('h3', {}, '판정에 쓴 근거'));
+    if (d.trim) parts.push(el('div', { class: 'muted' }, `근거 다이어트: 조각 ${d.trim.chunks_total}개 중 ${d.trim.chunks_kept}개 사용, ${fmtN(d.trim.chars_before)}자 → ${fmtN(d.trim.chars_after)}자 (${fmtPct(d.trim.saved_ratio)} 절감)`));
+    if ((d.evidence || []).length) parts.push(table(['#', '문서', '조각', '유사도', '내용'], d.evidence.map((e, i) =>
+      [i + 1, e.title || e.doc_id, e.chunk_idx, e.score == null ? '–' : e.score.toFixed(3), el('pre', { class: 'txt', style: 'max-height:140px' }, e.text || '')]), [0, 2, 3]));
+    else if (d.reference) parts.push(msgBox('근거', d.reference));
+  }
+
+  parts.push(el('h3', {}, '응답과 문장별 판정'));
+  if ((d.sentences || []).length) parts.push(el('div', { class: 'muted', style: 'margin-bottom:6px' }, '초록 = 근거와 맞음, 빨강 = 환각 의심. 숫자는 판정 점수(높을수록 환각 쪽), 문장에 마우스를 올리면 판정 시간이 보입니다.'));
+  parts.push(responseView(d.response || '', d.sentences));
+  if ((d.sentences || []).length) parts.push(el('details', {}, el('summary', {}, '문장별 판정 표'), table(['#', '문장', '점수', '판정', '시간'], d.sentences.map(s =>
+    [s.sentence_idx, s.text, s.score == null ? '–' : s.score.toFixed(3), s.hallucinated ? pill('환각', 'bad') : pill('통과', 'ok'), fmtMs(s.judge_ms)]), [0, 2, 4])));
+  if (d.post_check) {
+    parts.push(el('h3', {}, '2단 검증'));
+    parts.push(el('pre', { class: 'txt' }, JSON.stringify(d.post_check, null, 2)));
+  }
+  $('tr-detail').replaceChildren(...parts);
+  $('tr-detail').className = 'detail show';
+  if (scroll) $('tr-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.querySelectorAll('#tr-list tr.row').forEach(r => r.classList.toggle('sel', r.dataset.id === id));
+}
+$('tr-reload').onclick = () => $('key').value.trim() && loadTraces();
+$('tr-clear').onclick = async () => {
+  if (!$('key').value.trim() || !confirm('요청 기록을 모두 지울까요? 되돌릴 수 없습니다.')) return;
+  const r = await fetch('/v1/traces', { method: 'DELETE', headers: hdr() });
+  if (r.ok) { msg(`요청 기록 ${(await r.json()).deleted}개를 지웠습니다.`, 'ok'); TR_SEL = null; $('tr-detail').className = 'detail'; loadTraces(); }
+};
 $('load').onclick = load;
 $('key').onkeydown = e => { if (e.key === 'Enter') load(); };
 try { const k = sessionStorage.getItem('hgkey'); if (k) { $('key').value = k; load(); } } catch (e) {}

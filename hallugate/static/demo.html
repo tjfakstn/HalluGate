@@ -109,6 +109,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
           <select id="upstream"><option value="openai">OpenAI</option><option value="anthropic">Anthropic (Claude)</option></select></div>
         <div><label for="llmkey">LLM API 키</label><input id="llmkey" type="password" autocomplete="off" placeholder="sk-..."></div>
       </div>
+      <label class="check"><input id="trace" type="checkbox"> 콘솔에 기록 남기기 (<code>x-hallugate-trace: 1</code> — 이 요청의 LLM 입력·근거·문장별 판정을 7일간 저장, <a href="/console">내 사용 현황</a>에서 나만 봄)</label>
       <div class="hint">키는 이 브라우저 탭에만 보관하고 게이트웨이는 저장·기록하지 않습니다. LLM 키는 고른 제공자에게만 전달됩니다.</div>
     </div>
 
@@ -211,7 +212,8 @@ function keyHeaders() {
   if (!HOSTED) return {};
   const k = $('hgkey').value.trim(), l = $('llmkey').value.trim(), u = $('upstream').value;
   try { sessionStorage.setItem('hgkey', k); sessionStorage.setItem('llmkey', l); sessionStorage.setItem('upstream', u); } catch (e) {}
-  return { 'x-upstream': u, ...(k ? { 'x-hallugate-key': k } : {}), ...(l ? { 'Authorization': 'Bearer ' + l } : {}) };
+  return { 'x-upstream': u, ...(k ? { 'x-hallugate-key': k } : {}), ...(l ? { 'Authorization': 'Bearer ' + l } : {}),
+           ...($('trace').checked ? { 'x-hallugate-trace': '1' } : {}) };
 }
 
 function loadPreset(p) { $('ref').value = REF; $('q').value = p.q; $('mock').value = HOSTED ? '' : (p.a || ''); $('source').value = ''; }
@@ -370,6 +372,8 @@ async function send() {
       const why = { 401: '키가 없거나 올바르지 않습니다', 413: '근거·문서가 한도보다 깁니다', 429: `사용량 한도를 넘었습니다${r.headers.get('retry-after') ? ` (${r.headers.get('retry-after')}초 뒤 다시 시도)` : ''}` }[r.status];
       log('err', `<span class="tag bad">오류 ${r.status}</span>${why ? esc(why) + ' — ' : ''}${esc(msg)}`); return;
     }
+    const tid = r.headers.get('x-hallugate-trace-id');
+    if (tid) log('trace', `<span class="tag gray">기록</span><a href="/console#${esc(tid)}" target="_blank">콘솔에서 이 요청 보기</a> <code>${esc(tid)}</code>`);
     const bw = r.headers.get('x-budget-warning'), bu = r.headers.get('x-budget-used');
     if (bw) log('budget', `<span class="tag ${bw === 'exceeded' ? 'bad' : 'gray'}">예산</span>이번 달 예산 ${Math.round(parseFloat(bu) * 100)}% 사용${bw === 'exceeded' ? ' (초과)' : ''}`);
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';

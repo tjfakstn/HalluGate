@@ -155,11 +155,18 @@ for chunk in stream:
   -H "content-type: application/json" -d '{"doc_id": "about", "title": "About us", "text": "..."}'</code></pre>
   <p>그다음 채팅 요청에 <code>"verification": {"collection": "kb"}</code>를 주면 질문으로 관련 조각을 찾아 LLM에 넣고 같은 조각으로 검증합니다. 컬렉션은 내 키에만 보입니다.</p>
 
-  <h2>6. 한도 · 사용량 · 개인정보</h2>
+  <h2>6. 요청 기록 남기기 (디버깅용, 선택)</h2>
+  <p>프롬프트·RAG를 다듬을 때, 요청에 헤더 <code>x-hallugate-trace: 1</code>을 붙이면 그 요청만 상세 기록이 남습니다. <a href="/console">내 사용 현황</a>의 "요청 기록"에서 LLM에 실제로 간 메시지(컬렉션 근거가 들어간 뒤), 판정에 쓴 근거, 문장별 판정 점수, 토큰·지연을 볼 수 있습니다.</p>
+<pre><button class="copy">복사</button><code>client.chat.completions.create(..., extra_headers={"x-hallugate-trace": "1"})
+# 응답 헤더 x-hallugate-trace-id 로 콘솔의 기록을 찾을 수 있습니다
+# API: GET /v1/traces, GET /v1/traces/{id}, DELETE /v1/traces/{id}, DELETE /v1/traces</code></pre>
+  <p>기록은 내 키로만 볼 수 있고 7일 뒤(또는 키당 200개를 넘으면 오래된 것부터) 지워집니다. 요청 헤더(LLM 키 포함)는 저장하지 않습니다. 운영 중인 실사용자 데이터에는 꼭 필요할 때만 켜세요.</p>
+
+  <h2>7. 한도 · 사용량 · 개인정보</h2>
   <ul>
     <li>기본 한도: 분당 30요청, 동시 4개, 근거 5만 자, 하루 2단 검증 50회. 넘으면 429(<code>retry-after</code>) 또는 413</li>
     <li>내 토큰·추정 비용·검증 결과는 <a href="/console">내 사용 현황</a>에서 봅니다(API: <code>GET /v1/usage?window=30d</code>). 월 예산을 받았으면 응답 헤더 <code>x-budget-used</code>로 사용률이 옵니다</li>
-    <li>질문·근거·응답 원문과 LLM 키는 기록하지 않습니다. 시간·토큰 수·판정 수 같은 숫자만 30일 보관합니다. 데이터 삭제는 운영자에게 요청하세요</li>
+    <li>LLM 키는 어디에도 기록하지 않습니다. 질문·근거·응답 원문은 위 요청 기록을 켠 요청만 7일 남고, 그 밖에는 시간·토큰 수·판정 수 같은 숫자만 30일 보관합니다. 키 전체 데이터 삭제는 운영자에게 요청하세요</li>
   </ul>
 </article></main>
 <script>

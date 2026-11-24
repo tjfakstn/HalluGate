@@ -73,6 +73,7 @@ class RequestRecord:
     trim_chars_after: int = 0
     trim_chunks_kept: int = 0
     trim_chunks_total: int = 0
+    trace_id: str = ''                 # 요청 추적 ID (SPEC §10.12). 기록에는 traced 참/거짓만
 
     def now(self):
         return (time.perf_counter() - self.t0) * 1000

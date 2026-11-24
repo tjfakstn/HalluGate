@@ -28,6 +28,7 @@ from .pipeline import RequestRecord, VerifyPipeline, is_english
 from .limits import Limiter
 from .metrics import MetricsStore, parse_window, rejected, summarize
 from .trim import Trimmer
+from . import traces as trmod
 from .postcheck import skipped
 from .splitter import IncrementalSplitter
 from .tokens import make_tokens
@@ -117,7 +118,8 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                                          votes=settings.post_check_votes, threshold=settings.post_check_threshold)
     state = {'judge': judge, 'client': http_client, 'store': store, 'post_checker': post_checker, 'keys': keys,
              'limiter': limiter or Limiter(), 'cold': True,
-             'metrics': MetricsStore(settings.keys_db) if settings.hosted else None}   # 운영 모드 기록 (SPEC §10.5)
+             'metrics': MetricsStore(settings.keys_db) if settings.hosted else None,   # 운영 모드 기록 (SPEC §10.5)
+             'traces': trmod.TraceStore(settings.keys_db, settings.trace_max_per_key) if settings.hosted else None}
     allow_up = dict(x.split('=', 1) for x in settings.upstream_allowlist.split(',') if '=' in x)   # SPEC §10.3
     tokens = make_tokens(settings.stride_tokenizer)
 
@@ -137,6 +139,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         if state['metrics'] is not None:                 # 콜드 스타트 관측·보관 기간 정리 (SPEC §10.5·10.6)
             state['metrics'].add_start((time.perf_counter() - t_w) * 1000)
             state['metrics'].prune(settings.metrics_retention_days)
+            state['traces'].prune(settings.trace_retention_days)
         if state['store'] is None and settings.collection_db:
             from .store import SQLiteStore
             emb = None if settings.collection_embedder else getattr(state['judge'], 'embedder', None)
@@ -159,13 +162,24 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         state['metrics'].add(row)
         print(json.dumps({'event': 'request', **row}, ensure_ascii=False), flush=True)
 
-    def _log(rec):
+    def _save_trace(rec, trace, summary):
+        # 사용자가 켠 요청만 원문 상세를 따로 저장 (SPEC §10.12). 헤더는 넘겨받지 않는다
+        if trace is None or not rec.trace_id or state['traces'] is None:
+            return
+        try:
+            state['traces'].add(rec.tenant, trmod.build(**trace, summary=summary, max_chars=settings.trace_max_chars),
+                                tid=rec.trace_id)
+        except Exception as ex:                                     # noqa: BLE001 — 추적 실패가 응답을 막지 않게
+            print(json.dumps({'event': 'trace_error', 'error': type(ex).__name__}), flush=True)
+
+    def _log(rec, trace=None):
         if settings.hosted:
             row = summarize(rec.to_dict(), rec.status, rec.stream, rec.cold)
             _emit(row)
             if rec.tenant and row.get('tokens_in') is not None:     # 예산용 월 누적 (SPEC §10.10)
                 state['keys'].add_month_usage(rec.tenant, (row['tokens_in'] or 0) + (row['tokens_out'] or 0),
                                               row.get('llm_cost_usd') or 0.0)
+            _save_trace(rec, trace, row)
             return
         if settings.metrics_path:
             with open(settings.metrics_path, 'a') as f:
@@ -337,6 +351,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         if b.get('purge'):                               # 그 사용자의 컬렉션·기록 삭제 (SPEC §10.5)
             out['purged_docs'] = (await asyncio.to_thread(state['store'].purge, key_id + '/')) if state['store'] else 0
             out['purged_records'] = await asyncio.to_thread(state['metrics'].purge, key_id)
+            out['purged_traces'] = await asyncio.to_thread(state['traces'].delete, key_id)
         return out
 
     @app.get('/admin/stats', include_in_schema=False)
@@ -350,6 +365,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             return _err(str(ex))
         m = state['metrics']
         await asyncio.to_thread(m.prune, settings.metrics_retention_days)
+        await asyncio.to_thread(state['traces'].prune, settings.trace_retention_days)
         return await asyncio.to_thread(m.stats, w, window)
 
     def _valid_limits(lm):
@@ -389,6 +405,44 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             'monthly_tokens': lm.get('monthly_tokens'), 'monthly_usd': lm.get('monthly_usd'),
             'action': lm.get('budget_action', 'warn')}
         return {'window': window, **out}
+
+    # ---------- 요청 추적 조회 (SPEC §10.12): 자기 것만 ----------
+    def _trace_tenant(request):
+        if not settings.hosted:
+            return None, _err('traces are available only in hosted mode', 404, 'not_found_error')
+        return _tenant(request)
+
+    @app.get('/v1/traces')
+    async def list_traces(request: Request, limit: int = 50):
+        t, e = _trace_tenant(request)
+        if e:
+            return e
+        if not 1 <= limit <= 200:
+            return _err('limit must be between 1 and 200')
+        await asyncio.to_thread(state['traces'].prune, settings.trace_retention_days)
+        return {'traces': await asyncio.to_thread(state['traces'].list, t.key_id, limit)}
+
+    @app.get('/v1/traces/{tid}')
+    async def get_trace(tid: str, request: Request):
+        t, e = _trace_tenant(request)
+        if e:
+            return e
+        d = await asyncio.to_thread(state['traces'].get, t.key_id, tid)
+        return d if d is not None else _err(f'trace {tid} not found', 404, 'not_found_error')
+
+    @app.delete('/v1/traces/{tid}')
+    async def delete_trace(tid: str, request: Request):
+        t, e = _trace_tenant(request)
+        if e:
+            return e
+        return {'deleted': await asyncio.to_thread(state['traces'].delete, t.key_id, tid)}
+
+    @app.delete('/v1/traces')
+    async def delete_traces(request: Request):
+        t, e = _trace_tenant(request)
+        if e:
+            return e
+        return {'deleted': await asyncio.to_thread(state['traces'].delete, t.key_id)}
 
     def _trim_embedder():
         # 근거 다이어트 임베더 = 컬렉션 검색과 같은 것 (SPEC §2.9)
@@ -482,6 +536,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         else:
             up_name, up_base = '', settings.upstream_base_url
         raw = await request.json()
+        ver_raw = dict(raw.get('verification') or {}) if isinstance(raw, dict) and isinstance(raw.get('verification'), dict) else None
         try:
             body, ref, mode, action, stride, opts = ctxmod.extract(raw, settings.default_mode, settings.default_action,
                                                                    default_stride(), with_stride=True, with_opts=True)
@@ -489,6 +544,10 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             return _err(str(e))
         if tenant is not None and ref and len(ref) > settings.max_ref_chars:
             return _err(f'reference longer than {settings.max_ref_chars} characters', 413, 'request_too_large')
+
+        question = ctxmod.strip_context_tags(ctxmod.last_user_text(body))   # 추적 미리보기용 (근거 삽입 전)
+        trace_id = (trmod.new_id() if tenant is not None and
+                    request.headers.get('x-hallugate-trace', '').lower() in ('1', 'true', 'on', 'yes') else '')
 
         # 컬렉션 RAG (SPEC §2.6): 요청에 근거가 없고 collection이 있으면 검색 → 프롬프트 삽입 → 같은 근거로 판정
         evidence, coll = None, opts.get('collection') if not ref else None
@@ -534,7 +593,23 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         rec = RequestRecord(mode=mode, action=action, stride=stride, tag=request.headers.get('x-request-tag', ''),
                             collection=coll or '', retrieve_ms=retrieve_ms if coll else 0.0,
                             n_evidence=len(evidence or []), tenant=tenant.key_id if tenant else '', upstream=up_name,
-                            ref_chars=len(ref or ''), stream=bool(body.get('stream')), cold=state.pop('cold', False))
+                            ref_chars=len(ref or ''), stream=bool(body.get('stream')), cold=state.pop('cold', False),
+                            trace_id=trace_id)
+
+        def tinfo(response='', sentences=None, status=200, error=None):
+            # 추적에 남길 원문 상세 (SPEC §10.12). LLM에 실제로 보낸 body(근거 삽입·다이어트 뒤)를 그대로 쓴다
+            if not trace_id:
+                return None
+            return dict(request_body=body, verification=ver_raw, reference=ref, question=question,
+                        evidence=[e.to_dict() for e in evidence or []], trim=trim_info, response=response,
+                        sentences=sorted(sentences or [], key=lambda x: x.get('sentence_idx', 0)), status=status,
+                        error=error, post_check=rec.post_check)
+
+        def trace_error(status, content):
+            # 업스트림 오류도 추적을 켰으면 남긴다 (측정 기록은 바깥에서 상태 코드로)
+            if trace_id:
+                _save_trace(rec, tinfo(status=status, error=content.decode('utf-8', 'replace')),
+                            {'stream': rec.stream, 'mode': mode, 'model': body.get('model', ''), 'verified': None})
         thr = judge.threshold_for(stride)
         pc_on = bool(opts.get('post_check', settings.post_check_default)) and mode != 'off'
         vh = {'x-verification-mode': mode, 'x-verification-action': action, 'x-verification-stride': str(stride),
@@ -543,6 +618,8 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             vh['x-verification-evidence'] = str(len(evidence or []))
         if tenant is not None:
             vh['x-upstream'] = up_name
+        if trace_id:
+            vh['x-hallugate-trace-id'] = trace_id
         pc_allow = ((lambda: state['keys'].take_post_check(tenant.key_id, _lim(tenant, 'post_check_daily', settings.post_check_daily)))
                     if tenant is not None else None)
         ev_info = ({'kind': 'evidence', 'collection': coll, 'retrieve_ms': retrieve_ms,
@@ -557,13 +634,17 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             r = await client.post(url, json=body, headers=headers)
             if r.status_code != 200 or mode == 'off':
                 if r.status_code == 200:                 # 검증을 끈 요청도 기록 (오류는 바깥에서 상태 코드로 기록)
+                    _txt = ''
                     try:
                         _d = r.json(); rec.usage, rec.model = _d.get('usage'), _d.get('model', '')
-                    except ValueError:
+                        _txt = (_d.get('choices') or [{}])[0].get('message', {}).get('content') or ''
+                    except (ValueError, AttributeError, IndexError):
                         pass
                     rec.t_client_done = rec.now()
-                    _log(rec)
+                    _log(rec, tinfo(response=_txt))
                     request.state.hg_logged = True
+                else:
+                    trace_error(r.status_code, r.content)
                 return Response(r.content, status_code=r.status_code, media_type='application/json', headers=vh)
             data = r.json()
             rec.usage, rec.model = data.get('usage'), data.get('model', '')
@@ -613,7 +694,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                 data['verification']['post_check'] = await _post_check(state['post_checker'], ref, content, rec, rec.cut,
                                                                        settings.post_check_timeout_ms, pc_allow)
             rec.t_client_done = rec.now()
-            _log(rec)
+            _log(rec, tinfo(response=data['choices'][0]['message'].get('content') or '', sentences=results))
             request.state.hg_logged = True
             return JSONResponse(data, headers=vh)
 
@@ -628,10 +709,12 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
         if resp.status_code != 200:
             err = await resp.aread()
             await resp.aclose()
+            trace_error(resp.status_code, err)
             return Response(err, status_code=resp.status_code, media_type='application/json', headers=vh)
 
         if mode == 'off':
             async def passthrough():
+                got = []                                 # 추적용 본문 (운영 모드)
                 try:
                     if tenant is None:
                         async for chunk in resp.aiter_raw():
@@ -644,6 +727,8 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                                 except ValueError:
                                     c = {}
                                 rec.model = c.get('model') or rec.model
+                                for ch in c.get('choices') or []:
+                                    got.append((ch.get('delta') or {}).get('content') or '')
                                 if c.get('usage'):
                                     rec.usage = c['usage']
                                     if not c.get('choices') and not wants_usage:
@@ -653,7 +738,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                 finally:
                     await resp.aclose()
                     rec.t_client_done = rec.now()
-                    _log(rec)
+                    _log(rec, tinfo(response=''.join(got)))
             return StreamingResponse(passthrough(), media_type='text/event-stream', headers=vh)
 
         async def gen():
@@ -671,6 +756,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                 return _sse(c)
 
             delivered = ''                                        # 사용자에게 나간 본문 (2단 검증 대상)
+            verdicts = {}                                         # 추적용 문장별 최종 판정
             try:
                 ref_idx = await _prepare(judge, ref, rec)
                 yield chunk(delta={'role': 'assistant', 'content': ''})
@@ -688,8 +774,12 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                             delivered += ev.text
                             yield chunk(delta={'content': ev.text})
                     elif ev.kind == 'verdict':
+                        if ev.info.get('kind') == 'sentence':
+                            verdicts[ev.info['sentence_idx']] = ev.info
                         yield chunk(verification=ev.info)
                     elif ev.kind == 'cut':
+                        if ev.info.get('kind') == 'sentence':
+                            verdicts[ev.info['sentence_idx']] = ev.info
                         yield chunk(finish='content_filter', verification={'cut': True, **ev.info})
                 if not rec.cut:
                     yield chunk(finish=meta.get('finish_reason', 'stop'))
@@ -702,7 +792,9 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                 yield 'data: [DONE]\n\n'
             finally:
                 await resp.aclose()
-                _log(rec)
+                _log(rec, tinfo(response=delivered, sentences=[
+                    {k: v for k, v in x.items() if k in ('sentence_idx', 'start', 'text', 'score', 'hallucinated', 'judge_ms')}
+                    for x in verdicts.values()]))
 
         return StreamingResponse(gen(), media_type='text/event-stream', headers=vh)
 

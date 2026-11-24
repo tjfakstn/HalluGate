@@ -172,6 +172,7 @@ modal app logs hallugate -f
   modal volume get hallugate-data /collections.sqlite3 backup/
   ```
   백업 파일에는 사용자 문서가 들어 있으므로 저장소에 넣지 않고 암호화된 곳에 둔다
+- 요청 추적(SPEC §10.12)은 사용자가 켠 요청만 원문이 `traces` 표에 남고 7일(`TRACE_RETENTION_DAYS`) 뒤 지워진다. 운영자 화면·관리자 API로는 원문을 볼 수 없다(건수만). 키를 폐기하며 데이터 삭제를 고르면 함께 지워진다
 - 측정 기록은 30일(`METRICS_RETENTION_DAYS`) 뒤 자동으로 지워진다. 컬렉션 문서는 사용자가 지우거나 `--purge`할 때까지 남는다
 - SQLite는 컨테이너 1대만 쓰므로 쓰는 곳이 하나다. 최대 컨테이너 수를 늘리려면 저장소를 먼저 바꿔야 한다(SPEC §10.7)
 
