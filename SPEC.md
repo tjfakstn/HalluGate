@@ -425,9 +425,9 @@ J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐*
 - 컨테이너가 뜨면 판정기를 불러 예열하고(§4) 예열 시간을 기록한다
 - 배포는 `modal deploy deploy/modal_app.py`(수동, 저장소 루트에서). GitHub Actions 자동 배포는 저장소 CI가 동작할 때 붙인다
 - Volume은 둘로 나눈다: `hallugate-data`(`/data`, 키·컬렉션·기록 SQLite)와 `hallugate-models`(`/models`, 판정기 폴더 `/models/judge_combo` + 임베더·토크나이저 캐시). SQLite는 컨테이너 1대만 쓰므로 쓰는 곳이 하나다. Volume은 몇 초마다, 그리고 컨테이너가 내려갈 때 저장된다
-- 컨테이너 안 설정: `HOSTED=1`, `KEYS_DB=/data/hallugate.sqlite3`, `COLLECTION_DB=/data/collections.sqlite3`, `JUDGE_MODEL_DIR=/models/judge_combo`, `METRICS_PATH=`(JSONL 끔). 배포 때 바꿀 값: GPU 종류 `HG_GPU`(기본 `L4`), 최소 컨테이너 수 `HG_MIN_CONTAINERS`(기본 0, 시연 날 1), `SCALEDOWN_SECONDS`
+- 컨테이너 안 설정: `HOSTED=1`, `KEYS_DB=/data/hallugate.sqlite3`, `COLLECTION_DB=/data/collections.sqlite3`, `JUDGE_MODEL_DIR=/models/judge_combo`, `METRICS_PATH=`(JSONL 끔). 배포 때 바꿀 값: GPU 종류 `HG_GPU`(기본 `A10G,L4` — 앞에서부터 배정 가능한 것. 11/24 측정에서 같은 이미지로 L4는 콜드 스타트 187~956초, A10G 3.7초), 최소 컨테이너 수 `HG_MIN_CONTAINERS`(기본 0, 시연 날 1), `SCALEDOWN_SECONDS`
 - 플랫폼 자체 한도: 함수당 초당 200요청(넘으면 429, Modal 문서)
-- **쓸 때만 켜기** (11/24, 콜드 스타트 3~8분·상시 1대 약 $630/월이라 결정, SSOT §7): 평소에는 최소 0대로 두고, 운영자가 쓰기 전에 켠다. `scripts/warm.py`
+- **쓸 때만 켜기** (11/24, 상시 1대 약 $630/월이라 결정, SSOT §7): 평소에는 최소 0대로 두고(A10G 콜드 스타트 약 20초), 시연처럼 첫 요청도 바로 응답해야 할 때 운영자가 켠다. `scripts/warm.py`
   - `up [--hours h]`: 재배포 없이 `web` 함수의 최소 컨테이너를 1로 바꾸고(`Function.autoscaler.update`), 끌 시각 `now + h시간`을 Modal Dict `hallugate-warm`의 `until`에 적는다. h는 0보다 크고 12 이하, 기본 2. 이미 켜져 있으면 끌 시각만 새로 적는다. `--wait`이면 `/health`가 응답할 때까지 기다리고 걸린 시간을 보인다
   - `down`: 최소 컨테이너를 0으로 바꾸고 `until`을 지운다(남은 컨테이너는 `SCALEDOWN_SECONDS` 뒤 내려감)
   - `status`: 끌 시각과 남은 시간

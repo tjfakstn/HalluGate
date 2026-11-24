@@ -6,7 +6,7 @@
 배포 (저장소 루트에서):
   modal deploy deploy/modal_app.py
 쓸 때만 켜기 (재배포 없이): python scripts/warm.py up --hours 2 / down — auto_cooldown이 끌 시각에 자동으로 끈다
-배포 때만 읽는 값: HG_GPU(기본 L4), HG_MIN_CONTAINERS(0), SCALEDOWN_SECONDS(300), HG_MAX_INPUTS(32)
+배포 때만 읽는 값: HG_GPU(기본 A10G,L4 — 앞에서부터 가능한 것, 쉼표로 여러 개), HG_MIN_CONTAINERS(0), SCALEDOWN_SECONDS(300), HG_MAX_INPUTS(32)
 """
 import os
 
@@ -40,7 +40,8 @@ HOSTED_ENV = {
 
 
 @app.function(
-    gpu=os.environ.get('HG_GPU', 'L4'),
+    # A10G 우선: 같은 이미지로 L4는 콜드 스타트 3~16분, A10G 3.7초 (11/24 측정, SSOT §7). L4는 예비
+    gpu=os.environ.get('HG_GPU', 'A10G,L4').split(','),
     volumes={'/data': data, '/models': models},
     secrets=[modal.Secret.from_name('hallugate')],
     min_containers=int(os.environ.get('HG_MIN_CONTAINERS', '0')),
