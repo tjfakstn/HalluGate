@@ -1,126 +1,167 @@
-# hallugate
+# HalluGate
 
-**RAG 응답을 스트리밍 중에 문장 단위로 검증하는 LLM 환각 검증 게이트웨이**
+**RAG 응답을 스트리밍 도중 문장 단위로 근거 문서와 대조하는 LLM 환각 검증 게이트웨이**
 2026-2 아주대학교 소프트웨어학과 자기주도프로젝트 · 설만수 · 지도 조현석 교수
 
-서비스와 LLM API 사이에 끼우는 OpenAI 호환 프록시입니다. 서비스는 `base_url`만 바꾸면 되고,
-게이트웨이는 요청에 담긴 근거 문서와 LLM이 흘려보내는 답변을 문장마다 대조해 환각을 표시하거나 차단합니다.
+서비스와 LLM API 사이에 끼우는 프록시입니다. 서비스는 SDK의 `base_url`만 바꾸면 되고, 게이트웨이는 LLM이 흘려보내는 답을
+문장마다 근거 문서와 대조해 환각을 **표시**하거나 **차단**합니다. OpenAI 형식과 Anthropic(Claude) 형식을 모두 받습니다.
 
 ```
-서비스 ──(요청 + 근거 문서)──▶ hallugate ──▶ LLM API (OpenAI 등)
-       ◀──(본문 + 문장별 판정)──   │   ◀── 토큰 스트림
-                                   └─ 문장 분할 → 소형 판정기(문장당 약 15ms, GPU)
+서비스 ──(요청 + 근거 문서)──▶ HalluGate ──▶ LLM API (OpenAI · Claude)
+       ◀──(본문 + 문장별 판정)──   │    ◀── 토큰 스트림
+                                   └─ 문장 분할 → 경량 판정기 2개 조합 (GPU, 판정 1회 p95 약 50ms)
 ```
 
-## 왜 만드나
+## 왜 만들었나
 
-기존 스트리밍 검증 도구는 정확도와 지연의 균형이 **고정**되어 있습니다.
-정확한 전용 판정기(MiniCheck)는 문장당 약 400ms라 실시간에 못 쓰고, 빠른 방식은 부정확합니다.
+기존 스트리밍 검증 도구(NeMo Guardrails, Guardrails AI 등)는 정확도와 지연 사이의 균형이 **고정**되어 있습니다.
+정확한 전용 판정기(MiniCheck-FlanT5-L)는 문장당 약 380ms라 실시간에 쓰기 어렵고, 빠른 방식은 부정확합니다.
 이 프로젝트는 두 가지를 만듭니다.
-1. **빠르고 정확한 소형 판정기**: 기존 판정기를 그대로 얹지 않고 공개 데이터로 직접 학습
-2. **검증 단위와 전달 정책을 조절하는 게이트웨이**: 그 트레이드오프를 요청·문장마다 바꿀 수 있게 함
 
-## 현재 상태 (2026-11-23)
+1. **스트리밍을 막지 않는 속도의 경량 판정기**: 공개 데이터(RAGTruth)로 직접 학습. 문장이 끝나기 전에 앞부분도 다시 판정
+2. **그 판정기를 서비스에 붙이는 게이트웨이**: 본문을 바꾸지 않고, 전달 정책(즉시 전달 / 판정 후 전달, 표시 / 차단)을 요청마다 고르게 함
+
+## 주요 결과 (실측)
+
+모든 수치는 실제로 실행해 얻은 값이며, 사전에 정한 기준과 함께 [SSOT.md](SSOT.md)에 기록되어 있습니다.
 
 | 항목 | 결과 |
 |---|---|
-| 배포 판정기 (I3, 11/11 채택) | **F1 base(DeBERTa-v3-base) + I2(ModernBERT-large, 근거 전체 2,048토큰) 점수 표준화 평균**, 8토큰 재판정, 임계값 2.992(cal-L 서비스 10%). dev-L 탐지율 **0.534 / 지연 9토큰**(F1 base 단독 0.495 / 14), Summary 0.156 → 0.266, 멀쩡한 응답 표시율 7.3%. 두 판정기 동시 실행(CUDA 스트림 2개) A100 판정 1회 p95 **61.3ms**(L3). **게이트웨이 연결 완료(11/23, `ComboJudge`, 서비스 임계값 B 2.7385, `configs/judge_combo_v1.json`)** |
-| 최신 LLM 점검 (M1, 11/11) | Claude Haiku·Sonnet 5.5 응답 536개(QA는 컬렉션 검색)에서 멀쩡한 응답 표시율 **4.5%**(기준 ≤ 15% 충족) → 임계값 유지. 단 최신 LLM 환각 탐지율은 **14%**(91개 중 13개, Opus 정답 기준)로 낮음. 원인은 근거 단어를 그대로 쓴 직접 모순(M1a, 놓친 것의 68%) |
-| 직접 모순 재학습 (K1, 11/12) | Sonnet으로 합성한 모순 1,500개를 더해 F1 base 재학습 → 새로 생성한 최신 LLM 응답 탐지율 9.5% → 11.6%(기준 +10%p 미달) → **미채택**, 배포 판정기 그대로 |
-| 최신 LLM 실제 응답 재학습 (K2, 11/13) | Claude Haiku·Sonnet 응답 5,855개(환각 문장 806개)를 더해 F1 base 재학습 → devM 탐지율 18.8% → 20.9%(같은 표시율 기준, 기준 +10%p 미달) → **미채택**. 사전 규칙에 따라 서비스 임계값은 최신 LLM 기준 B(2.7385)로 바꿔, 최신 LLM 탐지율 14.1% → 18.8%, 멀쩡한 응답 표시율 6.6% |
-| 외부 사람 정답·강한 검증기 (X2·J1, 11/13~18) | FaithBench에서 AUROC 0.629(HHEM-2.1과 비슷), 서비스 임계값 탐지율 11.8%. 응답 끝 Claude 검증 2단(J1)은 미달(Opus 탐지 54%·오경보 18%) |
-| 관리형 베타 운영 모드 (11/23) | `HOSTED=1`: API 키 인증·사용자별 컬렉션·업스트림 허용 목록(OpenAI/Claude)·사용량 한도·원문 없는 기록·관리자 통계. Modal 서버리스 GPU 배포 파일과 운영 문서([docs/OPERATIONS.md](docs/OPERATIONS.md)) 준비, **실제 배포 전**. 영어 응답만 검증 |
-| **근거 다이어트 (11/23, T1c 채택)** | 요청에 `trim`을 주면 긴 근거에서 질문과 관련된 조각 8개만 LLM에 보내고 같은 조각으로 판정. **긴 근거에서 LLM 입력 토큰 −47.6%, 답 정답성·충실성 비열등**(대조군 포함 실험, Claude 평가, RAGTruth QA). top_k 4는 절감 −73%지만 충실성 미달(T1b) |
-| 사용자 LLM 사용량·예산 (11/23) | 운영 모드에서 사용자 서비스의 LLM 토큰·추정 비용을 모델별로 기록(`GET /v1/usage`), 키별 월 예산(경고 또는 차단). 비용 절감 기능(근거 다이어트)의 바탕 |
-| 데모 화면 (11/23) | 게이트웨이 주소의 `/demo`에서 예제 시나리오를 스트리밍으로 재생하며 문장별 판정을 색으로 표시(외부 리소스 없음, 인터넷 없이 동작) |
-| 응답 끝 2단 검증 (11/23, 🧪) | 요청에 `post_check: true`를 주면 응답이 끝난 뒤 Claude가 문장별로 다시 검증해 결과를 한 번 보냄(본문 불변, 실패 시 `verified: false`). **기본 꺼짐** — 탐지 성능은 J2 전까지 미검증 |
-| **성능 향상 보류 (11/23)** | 탐지 최대화 실험 J2(오경보 ≤ 20%, LLM-AggreFact)는 설계·사전 기준 고정 완료, **Colab 컴퓨팅 단위 소진으로 11/26 이후 실행**. 그동안 서비스 개발 진행 |
-| 외부 비교 (X1, 보고용) | LettuceDetect-large가 dev-L에서 앞서지만(응답 AUROC 0.984 vs 0.860) 학습 응답 암기 정황이 강해 우열은 test에서. HHEM-2.1-open보다는 앞섬 |
-| 이전 판정기 | `student_vark`(문장 끝, RAGTruth dev AUROC 0.859, 약 15ms/문장) → F1 base 단독(8토큰, 임계값 3.969, dev-L 0.495). 게이트웨이는 `JUDGE_MODEL_DIR` 폴더의 `judge_config.json`으로 단일 판정기를 불러옴 |
-| 일반화 (HaluEval, 길이 통제) | 대화 우세, QA 비슷, **요약 약함** |
-| 게이트웨이 | 종단 간 측정 기준 충족: 본문 보존 100%, AUROC 0.853, 판정 p95 20.6ms. 토큰 단위 재판정·판정기 설정 파일·fail-open·컬렉션 RAG(문서 등록·검색·같은 근거로 판정) 구현(S4, 테스트 39개) |
-| 평가 세트 | 근거 문서가 학습과 겹치지 않는 cal-L(보정)·dev-L(주 평가, 환각 759개). 기존 dev는 참고 |
-| 엄격 재현율 상한(약 0.50)의 원인 | 경보 규칙·학습 목표·판정기 크기 모두 같은 상한 → **RAGTruth 정답 누락**이 원인(R4 Claude Opus 재판정). 학습 정답을 고치면 앞부분 판정이 문장 끝 판정을 따라잡음 |
-| 남은 문제 | 실제 가중치로 조합 판정기 점수 일치 확인, 2단 검증 실제 Claude 호출 확인·J2 결과 반영, 시연 녹화, `judge_config` v1.0 동결·모델 카드, **사람 점검**(Opus 재판정 정밀도, 30개), 최신 LLM 직접 모순 미탐(알려진 한계), Claude 업스트림 변환·재생성, 최종 RAGTruth test 1회 평가, 요약 과제 약점 |
+| **판정 지연** | 실서비스(Modal A10G, 실제 Claude 응답 9건) 요청별 판정 p95 **44~55ms** — 목표 68ms 이내. A100 두 판정기 동시 실행 p95 61.3ms |
+| **탐지 (RAGTruth, 학습과 근거가 겹치지 않는 dev-L)** | 환각 응답 탐지율 **0.534**, 탐지 지연 중앙값 **9토큰**(첫 환각 뒤), 멀쩡한 응답 오표시 7.3% (F1 base 단독 0.495 / 14토큰) |
+| **외부 사람 정답 (FaithBench)** | 응답 단위 AUROC **0.629** [0.559, 0.691] — 공개 판정기 HHEM-2.1과 비슷한 수준 |
+| **최신 LLM 응답** | Claude 응답에서 멀쩡한 응답 오표시 4.5~6.6%. 단 환각 탐지율은 **14~19%로 낮음** (아래 한계 참고) |
+| **근거 다이어트** (`trim`) | 긴 근거에서 관련 조각만 LLM에 보내 **입력 토큰 −47.6%**, 답의 정답성·충실성 비열등 (대조군 포함 실험) |
+| **본문 보존** | 게이트웨이를 거쳐도 사용자에게 가는 본문이 원문과 100% 같음 (차단 제외, 테스트 100개) |
+| **배포** | 콜드 스타트 원인을 분리 측정해 **5~16분 → 약 20초**로 단축 (GPU를 L4에서 A10G로). 쓸 때만 켜는 구조로 비용 관리 |
 
-전체 수치와 결정 이력은 **[SSOT.md](SSOT.md)**, 동작 명세는 **[SPEC.md](SPEC.md)** 에 있습니다.
+### 한계 (알고 있는 것)
+- **최신 LLM의 환각을 많이 놓칩니다.** 놓친 것의 약 68%는 근거 단어를 그대로 쓰면서 내용을 미세하게 바꾼 직접 모순입니다(M1a). 합성 데이터·최신 LLM 응답 재학습(K1·K2)으로도 기준만큼 개선되지 않아 기록으로 남겼습니다
+- 근거에서 **계산해 낸 수치**(예: 성장률로 역산한 작년 매출)도 근거에 없는 내용으로 보고 표시합니다
+- **영어 응답만** 검증합니다. 다른 언어는 검증하지 않고 본문을 그대로 전달합니다
+- RAGTruth test 분할 최종 평가(S5)는 아직 하지 않았습니다. 위 dev-L 수치는 개발용 평가 세트 기준입니다
 
-## 빠른 시작
+## 쓰는 방법
+
+### OpenAI SDK
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="https://<게이트웨이>/v1", api_key="sk-...",
+                default_headers={"x-hallugate-key": "hg_...", "x-upstream": "openai"})   # 운영 모드
+stream = client.chat.completions.create(
+    model="gpt-4o-mini", stream=True,
+    messages=[{"role": "user", "content": f"<context>{document}</context>\n\nHow did the company do in 2023?"}])
+for chunk in stream:
+    if chunk.choices and chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="")         # 본문은 평소와 같음
+    v = (chunk.model_extra or {}).get("verification")         # 판정은 choices가 빈 별도 청크
+    if v and v.get("hallucinated"):
+        print("\n[환각 의심]", v["text"])
+```
+
+### Claude 공식 SDK (Anthropic Messages 형식)
+```python
+import anthropic
+
+client = anthropic.Anthropic(base_url="https://<게이트웨이>", api_key="sk-ant-...",
+                             default_headers={"x-hallugate-key": "hg_..."})
+msg = client.messages.create(model="claude-sonnet-5-5", max_tokens=1024,
+                             system=f"Answer using only the document.\n<context>{document}</context>",
+                             messages=[{"role": "user", "content": "How did the company do in 2023?"}])
+for s in msg.model_extra["verification"]["sentences"]:
+    if s["hallucinated"]:
+        print("[환각 의심]", s["text"])
+```
+스트리밍에서는 판정이 `event: verification` SSE 이벤트로 섞여 옵니다. 공식 SDK는 이 이벤트를 건너뛰므로 기존 코드는 그대로 동작합니다.
+
+### 근거 문서와 옵션
+근거는 `<context>…</context>` 태그(메시지나 `system` 안), `verification.context` 필드, 또는 미리 올린 **컬렉션**(`verification.collection`, 검색해서 프롬프트에 넣고 같은 조각으로 판정) 중 하나로 줍니다. 근거가 없으면 검증 없이 중계만 합니다.
+
+| `verification` 옵션 | 동작 |
+|---|---|
+| `mode: pass` | 즉시 전달하고 판정은 뒤따라 보냄 (지연 거의 없음, 틀린 문장이 먼저 나갈 수 있음) |
+| `mode: hold` (기본) | 판정을 통과한 만큼만 내보냄 (첫 글자 약 0.25초 추가, 환각이 나가기 전에 막을 수 있음) |
+| `action: flag` / `cut` | 환각 문장 표시만 / 거기서 응답 중단 |
+| `trim: true` | 근거 다이어트 — 관련 조각만 LLM에 보내 입력 토큰 절감 |
+| `post_check: true` | 🧪 응답이 끝난 뒤 Claude로 한 번 더 검증 (실험 기능, 기본 꺼짐) |
+
+전체 규칙은 [SPEC.md](SPEC.md)에 있습니다.
+
+## 운영 모드 (관리형 베타)
+
+`HOSTED=1`로 띄우면 여러 사용자가 함께 쓰는 서비스가 됩니다. Modal 서버리스 GPU에 배포해 두었고, 초대 베타 전입니다.
+
+- **사용자 분리**: 게이트웨이 API 키(해시만 저장), 사용자별 컬렉션, 업스트림 허용 목록(OpenAI·Anthropic), 사용자 LLM 키는 저장하지 않고 전달만
+- **한도·비용**: 분당·동시 요청 한도, 키별 월 예산(경고 또는 차단), 사용자 LLM 토큰·추정 비용 집계
+- **기록**: 기본은 원문 없이 숫자만(30일). 사용자가 `x-hallugate-trace: 1`을 붙인 요청만 LLM 입력·근거·문장별 판정을 7일 보관해 본인만 조회
+- **화면**: `/start`(연결 안내), `/console`(내 사용 현황·요청 기록), `/admin`(운영 통계·키 관리), `/demo`(체험)
+- **비용 관리**: 평소에는 0대로 두고 `scripts/warm.py up/down`으로 필요할 때만 켬, 끌 시각이 지나면 자동으로 끔
+
+배포·운영 절차는 [docs/OPERATIONS.md](docs/OPERATIONS.md)에 있습니다.
+
+## 로컬에서 실행
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                                   # 모델 없이 도는 테스트 (82개 통과, 가중치 필요 1개 건너뜀)
+python -m pytest -q                       # 네트워크·모델 없이 도는 테스트 (100개, 가중치 필요 1개 건너뜀)
 
-# 가짜 LLM + 게이트웨이 (판정기 없이 파이프라인 확인: --lexical)
+# 가짜 LLM + 게이트웨이 (학습 판정기 없이 동작 확인: --lexical)
 python mock_upstream.py --port 9000 &
 UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --lexical --port 8000 &
-# 데모 화면: 브라우저에서 http://127.0.0.1:8000/demo (예제 시나리오 → 보내기)
+# 브라우저에서 http://127.0.0.1:8000/demo
 
-# 학습 판정기로 실행 (배포 조합: judge_combo/에 드라이브 final/judge_base → f1_base/, i2/judge_i2 → i2/,
-# configs/judge_combo_v1.json → judge_config.json). GPU 권장, 맥은 JUDGE_DEVICE=mps JUDGE_TIMEOUT_MS=15000
-JUDGE_MODEL_DIR=judge_combo UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --port 8000 &
-
-# 종단 간 측정 (RAGTruth 필요)
-git clone --depth 1 https://github.com/ParticleMedia/RAGTruth.git
-python scripts/make_replay_set.py --ragtruth RAGTruth/dataset --per-task 20
-python scripts/bench.py --metrics gateway_metrics.jsonl
+# 학습 판정기로 실행: judge_combo/에 f1_base/·i2/ 가중치와 configs/judge_combo_v1.json(→ judge_config.json)
+JUDGE_MODEL_DIR=judge_combo UPSTREAM_BASE_URL=http://127.0.0.1:9000/v1 python serve.py --port 8000
 ```
 
-Colab(T4)에서는 `experiments/notebooks/s3_gateway_bench.ipynb`를 그대로 실행하면 됩니다.
+학습된 가중치는 저장소에 포함하지 않습니다. 종단 간 측정은 Colab(T4)에서 `experiments/notebooks/s3_gateway_bench.ipynb`로 할 수 있습니다.
 
-### 서비스에서 쓰기
+## 연구 방식
 
-```python
-from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="sk-...")
-stream = client.chat.completions.create(
-    model="gpt-4o-mini", stream=True,
-    messages=[{"role": "user", "content": "질문"}],
-    extra_body={"verification": {"context": 근거문서, "mode": "hold", "action": "cut"}})
-for chunk in stream:
-    if chunk.choices and chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="")
-    if getattr(chunk, "verification", None):
-        print("\n[판정]", chunk.verification)
-```
-
-| 정책 | 동작 |
-|---|---|
-| `pass` | 즉시 전달, 판정은 뒤따라 옴 (지연 0, 틀린 문장이 먼저 나갈 수 있음) |
-| `hold` | 문장 단위로 보류 후 판정·전달 (누출 0, 문장 생성 시간만큼 지연) |
-| `flag` / `cut` | 환각 문장 표시만 / 응답 중단 (`finish_reason=content_filter`) |
+연구 과제라서 **실험의 공정성**을 코드 품질만큼 중요하게 다룹니다.
+- 모든 실험은 결과를 보기 전에 **채택 기준을 먼저 정하고**(노트북 첫 셀), 미달이면 미달로 기록합니다. 채택하지 못한 실험도 기준·결과·이유와 함께 [SSOT.md](SSOT.md)에 남아 있습니다
+- 최종 평가용 RAGTruth test 분할은 마지막 평가에서 한 번만 엽니다
+- 학습과 근거 문서가 겹치지 않는 평가 세트(dev-L)를 따로 만들어 오염을 측정했습니다(R0)
 
 ## 저장소 구조
 
 ```
-hallugate/            게이트웨이 패키지 (context, splitter, judge, pipeline, app, config)
-serve.py              게이트웨이 실행
-mock_upstream.py      API 키 없이 시험하는 가짜 LLM
-scripts/              재생 데이터 생성, 종단 간 측정
-tests/                pytest
+hallugate/              게이트웨이 패키지
+  app.py                  FastAPI 프록시 (OpenAI /v1/chat/completions, Anthropic /v1/messages)
+  splitter.py · pipeline.py · judge.py   문장 분할, 전달 정책, 판정기
+  context.py · store.py · trim.py        근거 추출, 컬렉션 검색, 근거 다이어트
+  keys.py · limits.py · metrics.py · traces.py   운영 모드 (키, 한도, 기록, 요청 추적)
+  static/                 /demo · /start · /console · /admin 화면
+deploy/modal_app.py     Modal 배포
+scripts/                warm.py(켜기·끄기), keys.py(키 관리), bench.py(종단 간 측정)
+mock_upstream.py        API 키 없이 시험하는 가짜 LLM (OpenAI·Claude 형식)
+tests/                  pytest
 experiments/
-  notebooks/          Colab 실험 노트북 (task1*, s1~s3, e1·e2·e4lite·e5lite, l1, r0~r2, r1·r1b·r1c, r4·r4b·r4c)
-  builders/           노트북 생성 스크립트 — 노트북은 여기서 만든다
-docs/
-  reports/            주간 진행 보고서
-  plan/               연구계획서
-SSOT.md               확정된 사실·수치·결정 (단일 진실 공급원)
-SPEC.md               게이트웨이 동작 명세
-AGENTS.md / CLAUDE.md AI 코딩 에이전트 작업 규칙
+  builders/             노트북 생성 스크립트 (노트북은 여기서만 만든다)
+  notebooks/            Colab 실험 노트북
+docs/                   진행 기록, 운영 문서, 연구 설계, 주간 보고서, 분석 결과
+SSOT.md · SPEC.md       확정된 수치·결정 / 게이트웨이 동작 명세
+AGENTS.md · CLAUDE.md   AI 코딩 에이전트 작업 규칙
 ```
 
 ## 문서
 
-| 문서 | 내용 | 갱신 시점 |
-|---|---|---|
-| [docs/PROGRESS.md](docs/PROGRESS.md) | 시간 순 진행 기록과 **현재 위치·다음 할 일** | 작업 단위가 끝날 때 |
-| [docs/RESEARCH_PLAN.md](docs/RESEARCH_PLAN.md) | 스트리밍 조기 탐지 연구 설계 (RQ, 선행 연구, 실험 E1~E6) | 설계가 바뀔 때 |
-| [SSOT.md](SSOT.md) | 데이터 분할, 판정기 사양, 모든 실측 수치, 사전 기준, 결정 기록, 일정 | 실험 결과가 나오거나 결정이 바뀔 때 |
-| [SPEC.md](SPEC.md) | API, 정책, 불변식, 측정 기록 형식, 수용 기준 | 게이트웨이 동작이 바뀔 때 |
-| [AGENTS.md](AGENTS.md) | 에이전트 공통 작업 규칙 | 규칙이 바뀔 때 |
-| [CLAUDE.md](CLAUDE.md) | Claude Code 전용 추가 규칙 (AGENTS.md를 불러옴) | |
+| 문서 | 내용 |
+|---|---|
+| [SSOT.md](SSOT.md) | 데이터 분할, 판정기 사양, 모든 실측 수치, 사전 기준, 결정 기록, 일정 |
+| [SPEC.md](SPEC.md) | API, 전달 정책, 불변식, 운영 모드, 수용 기준 |
+| [docs/PROGRESS.md](docs/PROGRESS.md) | 시간 순 진행 기록과 현재 위치·다음 할 일 |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | 배포, 사용자 관리, 관측, 장애 대응, 비용 |
+| [docs/RESEARCH_PLAN.md](docs/RESEARCH_PLAN.md) | 스트리밍 조기 탐지 연구 설계 |
+| [AGENTS.md](AGENTS.md) | 작업 규칙 (SPEC → 테스트 → 코드, 연구 공정성) |
+
+## 다음 할 일
+
+1. **최종 평가(S5)**: RAGTruth test 1회 개방, 공개 판정기·LLM 직접 판정과 비교
+2. **탐지 성능 향상(J2)** 과 **자동 교정 실험(C1)**: 판정기가 표시한 문장을 LLM이 근거에 맞게 고쳐 쓰게 해 환각이 실제로 줄어드는지 검증
+3. 보고서·데모 영상, SOFTCON (12월)
 
 ## 데이터·모델
 
-- [RAGTruth](https://github.com/ParticleMedia/RAGTruth), [HaluEval](https://github.com/RUCAIBox/HaluEval), 기준 판정기 [MiniCheck](https://github.com/Liyan06/MiniCheck)
-- 학습된 판정기 가중치(`judge_base/` 등)는 저장소에 포함하지 않습니다. 판정기 폴더의 `judge_config.json`이 입력 방식·임계값·재판정 간격을 정합니다(SPEC §4).
+[RAGTruth](https://github.com/ParticleMedia/RAGTruth) (학습·평가), [FaithBench](https://github.com/vectara/FaithBench) (외부 평가), [HaluEval](https://github.com/RUCAIBox/HaluEval), 기준 판정기 [MiniCheck](https://github.com/Liyan06/MiniCheck). 판정기 백본은 DeBERTa-v3-base와 ModernBERT-large입니다.
