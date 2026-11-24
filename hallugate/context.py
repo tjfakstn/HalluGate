@@ -40,6 +40,15 @@ def rag_messages(messages, evidence):
     return [{'role': 'system', 'content': f'{RAG_INSTRUCTION}\n\n<documents>\n{block}\n</documents>'}] + list(messages)
 
 
+def rag_system(system, evidence):
+    """Anthropic 형식(§2.10): 근거 조각을 system 맨 앞에 넣는다. 문자열이면 앞에 붙이고 블록 목록이면 텍스트 블록을 더한다."""
+    block = '\n\n'.join(f'[{i + 1}] {e.text}' for i, e in enumerate(evidence))
+    docs = f'{RAG_INSTRUCTION}\n\n<documents>\n{block}\n</documents>'
+    if isinstance(system, list):
+        return [{'type': 'text', 'text': docs}] + list(system)
+    return f'{docs}\n\n{system}' if system else docs
+
+
 def strip_context_tags(text):
     """질문 텍스트: <context> 태그 내용을 뺀 나머지 (근거 다이어트 검색어, SPEC §2.9)."""
     return CTX_TAG.sub(' ', text or '').strip()
@@ -62,6 +71,33 @@ def replace_context_tags(messages, new_ref):
     return out
 
 
+def replace_context_tags_body(body, new_ref):
+    """Anthropic 형식(§2.10): system과 messages(문자열·텍스트 블록 목록)에서 첫 <context> 태그 내용을 new_ref로
+    바꾸고 나머지 태그는 지운다. 찾는 순서는 extract와 같다(system → messages)."""
+    done = False
+
+    def sub(mt):
+        nonlocal done
+        if done:
+            return ''
+        done = True
+        return f'<context>{new_ref}</context>'
+
+    def fix(c):
+        if isinstance(c, str):
+            return CTX_TAG.sub(sub, c) if CTX_TAG.search(c) else c
+        if isinstance(c, list):
+            return [{**p, 'text': fix(p['text'])} if isinstance(p, dict) and p.get('type') == 'text'
+                    and isinstance(p.get('text'), str) else p for p in c]
+        return c
+
+    body = dict(body)
+    if 'system' in body:
+        body['system'] = fix(body['system'])
+    body['messages'] = [{**m, 'content': fix(m.get('content'))} for m in body.get('messages', [])]
+    return body
+
+
 def rag_reference(evidence):
     """판정 근거 = LLM에 넣은 조각과 같은 텍스트."""
     return '\n\n'.join(e.text for e in evidence)
@@ -78,7 +114,7 @@ def extract(body, default_mode='pass', default_action='flag', default_stride=0, 
     if isinstance(ref, list):
         ref = '\n\n'.join(str(x) for x in ref)
     if not ref:
-        found = []
+        found = CTX_TAG.findall(_content_text(body.get('system')))    # Anthropic 형식의 system (§2.10)
         for m in body.get('messages', []):
             found += CTX_TAG.findall(_content_text(m.get('content')))
         ref = '\n\n'.join(s.strip() for s in found) or None

@@ -139,7 +139,7 @@ cut 발생 시 종료 청크에 `{"cut": true, "sentence_idx": n}`이 함께 실
 - 측정 기록: `collection`, `retrieve_ms`, `n_evidence`.
 
 ### 2.7 업스트림
-- 📋 `UPSTREAM_PROVIDER=openai|anthropic`. OpenAI 형식은 그대로 통과, Claude는 Messages API로 변환해 호출하고 응답을 OpenAI 청크 형식으로 되돌린다.
+- ✅ Claude 공식 SDK(Messages 형식) 사용자는 §2.10 `POST /v1/messages`로 받는다(형식 변환 없이 Anthropic `/v1/messages`로 중계). OpenAI 형식 요청을 Claude 형식으로 바꾸는 변환은 하지 않는다
 - ✅ 스트리밍의 `delta.tool_calls`·`function_call`·`refusal`은 판정 없이 도착 즉시 그대로 통과한다(본문과 같은 청크에 있으면 분리해 보냄).
   `usage` 청크(`stream_options.include_usage`)는 종료 청크 뒤, `[DONE]` 앞에 보낸다. 업스트림 `finish_reason`(예: `tool_calls`)을 유지한다.
 
@@ -162,6 +162,27 @@ cut 발생 시 종료 청크에 `{"cut": true, "sentence_idx": n}`이 함께 실
 - **알림**: 스트리밍은 본문보다 먼저 `{"kind": "trim", "chunks_total", "chunks_kept", "chars_before", "chars_after", "saved_ratio", "top_k"}` 1회, 비스트리밍은 `verification.trim`. 응답 헤더 `x-verification-trim: <남긴 수>/<전체 수>`
 - 기록: 근거 글자 수 전·후, 조각 수(운영 모드 §10.5 허용 목록에 추가)
 - 잘못된 `trim` 값 → 400
+
+### 2.10 Anthropic Messages 형식 `POST /v1/messages` ✅
+Claude 공식 SDK(`anthropic`)를 쓰는 서비스가 `base_url`만 바꿔 쓰게 한다. 요청·응답은 Anthropic Messages API 형식 그대로이고, 검증 정보는 SDK가 모르는 필드·이벤트로만 더한다(§2.1의 OpenAI 경로와 같은 원칙).
+- **업스트림**: `{업스트림 주소}/messages`. 운영 모드는 `x-upstream`이 `anthropic`(기본값)일 때만 받고 다른 값이면 400. 셀프호스팅은 `ANTHROPIC_BASE_URL`(기본 `https://api.anthropic.com/v1`)
+- **전달하는 헤더**: `x-api-key`·`authorization`(사용자 LLM 키), `anthropic-version`, `anthropic-beta`만. 운영자 키는 쓰지 않는다(§10.3)
+- **근거·옵션**: §2.1과 같다 — `verification` 필드(SDK `extra_body`, 업스트림 전 제거), 또는 `<context>` 태그. 태그는 `messages`와 **`system`**(문자열 또는 텍스트 블록 목록)에서 찾는다. 메시지 내용이 블록 목록이면 `text` 블록만 본다
+  - 컬렉션 근거(§2.6)는 `system` 맨 앞에 넣는다(문자열이면 앞에 붙이고, 블록 목록이면 텍스트 블록을 앞에 더함)
+  - 근거 다이어트(§2.9): 태그 근거면 태그 내용을 바꾸고(`system`·메시지, 블록 목록 포함), 필드 근거면 고른 조각을 `system` 앞에 넣는다
+- **판정 대상**: 응답의 `text` 블록들을 순서대로 이어 붙인 본문. `thinking`·`tool_use` 등 다른 블록은 판정하지 않는다
+- **비스트리밍**: 응답 JSON에 최상위 `verification` 필드를 더한다(§2.3과 같은 내용). `hold`+`cut`이면 `text` 블록을 환각 문장 앞까지 남긴 블록 하나로 바꾸고 그 뒤 블록은 빼며 `stop_reason: "refusal"`
+- **스트리밍**(SSE `event:` 이름 + `data:`)
+  - `message_start`는 받은 그대로 맨 처음에 보낸다. 본문보다 먼저 온 다른 블록(`thinking` 등)은 도착 즉시 보낸다
+  - 본문은 게이트웨이가 **`text` 블록 하나**로 다시 만들어 보낸다(`content_block_start` → 판정을 통과한 만큼 `text_delta` → `content_block_stop`). 업스트림의 `text` 블록이 여럿이면 하나로 합친다
+  - 본문이 시작된 뒤 온 다른 블록(`tool_use` 등)은 본문을 다 보낸 뒤 순서대로 보낸다. 블록 `index`는 게이트웨이가 보내는 순서대로 다시 매긴다
+  - 판정 결과는 이름이 `verification`인 SSE 이벤트(`data: {"type": "verification", ...}`, 내용은 §2.2 판정 청크와 같음)로 보낸다. 공식 SDK는 모르는 이벤트를 건너뛰므로 기존 코드에 영향이 없고, 필요한 클라이언트만 SSE를 직접 읽는다
+  - 끝: `message_delta`(업스트림 `stop_reason`·`usage`) → 2단 검증(§5.3)을 켰으면 `verification` 이벤트 1회 → `message_stop`
+  - `cut`: 환각 판정 시 `verification` 이벤트(`cut: true`) → `content_block_stop` → `message_delta`(`stop_reason: "refusal"`) → `message_stop`. 아직 안 보낸 블록은 보내지 않는다
+  - `ping`은 보내지 않는다. 업스트림 `error` 이벤트는 그대로 보내고 끝낸다. `text` 블록의 `citations_delta`는 검증을 켠 요청에서 보내지 않는다(검증을 끄면 그대로)
+- **검증 끔**(`mode: off`, 근거 없음): 업스트림 응답을 바꾸지 않고 그대로 보낸다(운영 모드는 사용량만 읽음)
+- **사용량**(§10.10): 입력 = `input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens`, 캐시 = `cache_read_input_tokens`, 출력 = `output_tokens`. 스트리밍은 `message_start`·`message_delta`의 `usage`에서 읽는다
+- 인증·한도·예산·기록·요청 추적(§10)은 `/v1/chat/completions`와 같다
 
 ## 3. 문장 분할 — `IncrementalSplitter` ✅
 
@@ -329,6 +350,7 @@ J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐*
 | `ADMIN_TOKEN` | (빈 값) | 문서 등록 API 접근 토큰. 비우면 열림 |
 | `POST_CHECK` | `0` | `1`이면 요청에 지정이 없을 때 2단 검증을 켠다 (§5.3) |
 | `POST_CHECK_MODEL` / `POST_CHECK_VOTES` / `POST_CHECK_THRESHOLD` | `claude-sonnet-5-5` / 3 / 0.5 | 2단 검증 모델, 판정 횟수, 응답 표시 임계값(H로 본 판정 비율) |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com/v1` | 셀프호스팅에서 `/v1/messages`(§2.10)가 호출할 Anthropic 주소 |
 | `POST_CHECK_TIMEOUT_MS` | 30000 | 2단 검증 시간 제한, 넘으면 `verified: false` |
 | `ANTHROPIC_API_KEY` | (빈 값) | 2단 검증용. 없으면 2단 검증 불가(`unavailable`) |
 | `DEMO` | `1` | `0`이면 데모 화면(`/demo`)을 끈다 (§2.8) |
@@ -353,6 +375,7 @@ J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐*
 | A12 | 판정기 장애·시간 초과·비영어에서 본문 보존 100%, `verified: false` 1회 | ✅ 테스트 |
 | A13 | 조합 판정기: 점수 = 하위 판정기 표준화 평균(노트북 `combine`과 같은 값), 간격별 임계값 B 적용, 게이트웨이에서 그대로 동작 | ✅ 테스트(작은 임의 모델) + **실제 가중치(11/23)**: F1 base 고정 예제 50개 \|Δlogit\| 최대 0.000016, 조합 점수 = 두 판정기 표준화 평균(오차 0), 데모 예제 3개 판정 정상 |
 | A14 | 2단 검증: 켜면 응답 끝에 결과 청크 1회(종료 청크 뒤, `[DONE]` 앞), 본문 보존 100%, 검증기 오류·시간 초과·미설정에서 `verified: false`로 본문 영향 없음, 끄면 아무것도 안 보냄 | ✅ 테스트(가짜 Claude 클라이언트). 탐지 성능은 J2 |
+| A16 | Anthropic 형식(§2.10): 공식 `anthropic` SDK가 그대로 동작(비스트리밍·스트리밍, `verification` 이벤트 무시), 본문 보존 100%, 문장 판정·`cut`, 본문 뒤 `tool_use`·본문 앞 `thinking` 블록 보존(순서·index), `system`의 `<context>`, 컬렉션 근거가 `system`에 들어감, 사용자 키만 전달·`verification` 필드 제거, 사용량·추적 기록, 검증 끔은 그대로 통과 | ✅ 테스트 (가짜 Claude 업스트림) |
 | A15 | 근거 다이어트: 켜면 고른 조각만 LLM에 가고 같은 조각으로 판정(태그·필드 두 경우), 짧은 근거·컬렉션 요청은 그대로, 본문 보존 | ✅ 테스트. 절감·품질 T1c 채택(입력 토큰 −47.6%, 정답성·충실성 비열등) |
 
 ## 9. 로드맵

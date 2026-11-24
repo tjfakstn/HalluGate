@@ -29,6 +29,7 @@ from .limits import Limiter
 from .metrics import MetricsStore, parse_window, rejected, summarize
 from .trim import Trimmer
 from . import traces as trmod
+from . import anthropic_fmt as anth
 from .postcheck import skipped
 from .splitter import IncrementalSplitter
 from .tokens import make_tokens
@@ -459,19 +460,28 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
     def _lim(t, name, default):
         return int((t.limits or {}).get(name, default))
 
-    @app.post('/v1/chat/completions')
-    async def chat(request: Request):
+    async def _entry(request, fmt):
         tenant, e = _tenant(request)
         if e:
             if settings.hosted:
                 _emit(rejected('', e.status_code))
             return e
         if tenant is None:
-            return await _chat(request, None)
-        resp = await _limited_chat(request, tenant)
+            return await _chat(request, None, fmt)
+        resp = await _limited_chat(request, tenant, fmt)
         if not isinstance(resp, StreamingResponse) and not getattr(request.state, 'hg_logged', False):
-            _emit(rejected(tenant.key_id, resp.status_code, request.headers.get('x-upstream', 'openai')))
+            _emit(rejected(tenant.key_id, resp.status_code,
+                           request.headers.get('x-upstream', 'anthropic' if fmt == 'anthropic' else 'openai')))
         return resp
+
+    @app.post('/v1/chat/completions')
+    async def chat(request: Request):
+        return await _entry(request, 'openai')
+
+    @app.post('/v1/messages')
+    async def messages(request: Request):
+        # Anthropic Messages 형식 (SPEC §2.10)
+        return await _entry(request, 'anthropic')
 
     def _budget(tenant):
         """이번 달 예산 사용 비율 (SPEC §10.10). 예산이 없으면 None."""
@@ -483,9 +493,9 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
               u['cost_usd'] / lm['monthly_usd'] if lm.get('monthly_usd') else 0.0]
         return max(fr), u
 
-    async def _limited_chat(request, tenant):
+    async def _limited_chat(request, tenant, fmt='openai'):
         used, _ = _budget(tenant)
-        resp = await _limited_chat_inner(request, tenant, used)
+        resp = await _limited_chat_inner(request, tenant, used, fmt)
         if used is not None:
             resp.headers['x-budget-used'] = f'{used:.3f}'
             if used >= 1.0:
@@ -494,7 +504,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                 resp.headers['x-budget-warning'] = 'near'
         return resp
 
-    async def _limited_chat_inner(request, tenant, used):
+    async def _limited_chat_inner(request, tenant, used, fmt='openai'):
         if used is not None and used >= 1.0 and (tenant.limits or {}).get('budget_action') == 'block':
             return _err('monthly budget exceeded', 429, 'insufficient_quota')
         # 운영 모드 한도 (SPEC §10.4): 분당 → 동시. 거절된 요청은 업스트림을 부르지 않는다
@@ -509,7 +519,7 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             r.headers['retry-after'] = '1'
             return r
         try:
-            resp = await _chat(request, tenant)
+            resp = await _chat(request, tenant, fmt)
         except BaseException:
             lim.release(tenant.key_id)
             raise
@@ -527,14 +537,17 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             lim.release(tenant.key_id)
         return resp
 
-    async def _chat(request, tenant):
+    async def _chat(request, tenant, fmt='openai'):
+        is_anth = fmt == 'anthropic'                     # Anthropic Messages 형식 (SPEC §2.10)
         if tenant is not None:                           # 업스트림 허용 목록 (SPEC §10.3)
-            up_name = request.headers.get('x-upstream', 'openai')
+            up_name = request.headers.get('x-upstream', 'anthropic' if is_anth else 'openai')
+            if is_anth and up_name != 'anthropic':
+                return _err('/v1/messages supports only x-upstream: anthropic')
             if up_name not in allow_up:
                 return _err(f'x-upstream must be one of {sorted(allow_up)}')
             up_base = allow_up[up_name]
         else:
-            up_name, up_base = '', settings.upstream_base_url
+            up_name, up_base = '', settings.anthropic_base_url if is_anth else settings.upstream_base_url
         raw = await request.json()
         ver_raw = dict(raw.get('verification') or {}) if isinstance(raw, dict) and isinstance(raw.get('verification'), dict) else None
         try:
@@ -560,7 +573,10 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             if not await asyncio.to_thread(store.exists, cname):
                 return _err(f'collection {coll} not found', 404, 'not_found_error')
             evidence = await asyncio.to_thread(store.search, cname, ctxmod.last_user_text(body), settings.collection_top_k)
-            if evidence:
+            if evidence and is_anth:
+                body['system'] = ctxmod.rag_system(body.get('system'), evidence)
+                ref = ctxmod.rag_reference(evidence)
+            elif evidence:
                 body['messages'] = ctxmod.rag_messages(body.get('messages', []), evidence)
                 ref = ctxmod.rag_reference(evidence)
             else:
@@ -576,7 +592,12 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             trimmer = Trimmer(_trim_embedder(), settings.collection_chunk_words, settings.collection_overlap)
             kept, total = await asyncio.to_thread(trimmer.select, ref, query, k)
             new_ref = '\n\n'.join(kept) if total > k else ref
-            if total > k:
+            if total > k and is_anth:
+                if from_tag:
+                    body = ctxmod.replace_context_tags_body(body, new_ref)
+                else:
+                    body['system'] = ctxmod.rag_system(body.get('system'), [SimpleNamespace(text=c) for c in kept])
+            elif total > k:
                 if from_tag:
                     body['messages'] = ctxmod.replace_context_tags(body.get('messages', []), new_ref)
                 else:
@@ -588,8 +609,10 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             ref = new_ref
 
         client, judge = state['client'], state['judge']
-        url = up_base.rstrip('/') + '/chat/completions'
-        headers = _headers(request)
+        url = up_base.rstrip('/') + ('/messages' if is_anth else '/chat/completions')
+        headers = ({'Content-Type': 'application/json',
+                    **{h: request.headers[h] for h in anth.PASS_HEADERS if request.headers.get(h)}}
+                   if is_anth else _headers(request))
         rec = RequestRecord(mode=mode, action=action, stride=stride, tag=request.headers.get('x-request-tag', ''),
                             collection=coll or '', retrieve_ms=retrieve_ms if coll else 0.0,
                             n_evidence=len(evidence or []), tenant=tenant.key_id if tenant else '', upstream=up_name,
@@ -629,6 +652,159 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             rec.trim_chars_before, rec.trim_chars_after = trim_info['chars_before'], trim_info['chars_after']
             rec.trim_chunks_kept, rec.trim_chunks_total = trim_info['chunks_kept'], trim_info['chunks_total']
 
+        def ver_body(results, thr0):
+            return {'mode': mode, 'action': action, 'stride': 0, 'threshold': thr0,
+                    'prepare_ms': rec.prepare_ms, 'sentences': results, 'cut': rec.cut, 'verified': rec.verified,
+                    **({'collection': coll, 'evidence': ev_info['evidence']} if ev_info else {}),
+                    **({'trim': trim_info} if trim_info else {}),
+                    **({'reason': rec.unverified_reason} if not rec.verified else {})}
+
+        async def judge_whole(content):
+            """비스트리밍: 문장 끝에서만 판정. 반환 (문장 판정 목록, cut이면 환각 문장 앞까지의 본문, 임계값)."""
+            thr0 = judge.threshold_for(0)
+            ref_idx = await _prepare(judge, ref, rec)
+            rec.threshold = thr0
+            sp = IncrementalSplitter()
+            results, kept = [], ''
+            for s_ in sp.feed(content) + sp.flush():
+                if not s_.clean or not rec.verified:
+                    kept += s_.text
+                    continue
+                reason = None
+                if not is_english(s_.clean):
+                    reason = 'non_english'
+                else:
+                    try:
+                        v = await asyncio.wait_for(asyncio.to_thread(judge.judge, ref_idx, s_.clean, content[:s_.start], thr0),
+                                                   settings.judge_timeout_ms / 1000)
+                    except asyncio.TimeoutError:
+                        reason = 'judge_timeout'
+                    except Exception:                                   # noqa: BLE001 — fail-open
+                        reason = 'judge_error'
+                if reason:
+                    rec.verified, rec.unverified_reason = False, reason
+                    kept += s_.text
+                    continue
+                results.append({'sentence_idx': s_.idx, 'start': s_.start, 'text': s_.clean, 'score': v.score,
+                                'hallucinated': v.hallucinated, 'judge_ms': v.judge_ms})
+                rec.sentences.append(dict(results[-1]))
+                if v.hallucinated and action == 'cut':
+                    rec.cut = True
+                    break
+                kept += s_.text
+            return results, kept, thr0
+
+        def usage_of(d):
+            return anth.usage_to_openai(d.get('usage')) if is_anth else d.get('usage')
+
+        def text_of(d):
+            if is_anth:
+                return anth.text_of(d.get('content'))
+            return ((d.get('choices') or [{}])[0].get('message') or {}).get('content') or ''
+
+        # ---------- 스트리밍: Anthropic 형식 (SPEC §2.10) ----------
+        async def anth_stream():
+            req = client.build_request('POST', url, json=body, headers=headers)
+            resp = await client.send(req, stream=True)
+            if resp.status_code != 200:
+                err = await resp.aread()
+                await resp.aclose()
+                trace_error(resp.status_code, err)
+                return Response(err, status_code=resp.status_code, media_type='application/json', headers=vh)
+
+            def take_usage(st, d):
+                u = (d.get('message') or {}).get('usage') if d.get('type') == 'message_start' else d.get('usage')
+                if isinstance(u, dict):
+                    st['usage'] = {**st.get('usage', {}), **{k: v for k, v in u.items() if v is not None}}
+                if d.get('type') == 'message_start':
+                    rec.model = (d.get('message') or {}).get('model') or rec.model
+
+            if mode == 'off':                            # 그대로 통과, 사용량·본문만 읽음
+                async def passthrough():
+                    st, got = {}, []
+                    try:
+                        if tenant is None:
+                            async for c in resp.aiter_raw():
+                                yield c
+                        else:
+                            async for line in resp.aiter_lines():
+                                if line.startswith('data:'):
+                                    try:
+                                        d = json.loads(line[5:])
+                                    except ValueError:
+                                        d = {}
+                                    take_usage(st, d)
+                                    dl = d.get('delta') or {}
+                                    if d.get('type') == 'content_block_delta' and dl.get('type') == 'text_delta':
+                                        got.append(dl.get('text') or '')
+                                yield line + '\n'
+                    finally:
+                        await resp.aclose()
+                        rec.usage = anth.usage_to_openai(st.get('usage'))
+                        rec.t_client_done = rec.now()
+                        _log(rec, tinfo(response=''.join(got)))
+                return StreamingResponse(passthrough(), media_type='text/event-stream', headers=vh)
+
+            async def agen():
+                st, out = {}, anth.Out()
+                delivered, verdicts = '', {}
+                events = anth.sse_events(resp)
+
+                async def counted():
+                    async for name, d in events:
+                        take_usage(st, d)
+                        yield name, d
+                it = counted()
+                try:
+                    ref_idx = await _prepare(judge, ref, rec)
+                    first = await anext(it, None)                 # message_start는 판정 전에 맨 처음 보낸다
+                    if first is not None:
+                        yield out.raw(first[1])
+                    if ev_info:
+                        yield out.verification(ev_info)
+                    if trim_info:
+                        yield out.verification(trim_info)
+                    pipe = VerifyPipeline(judge, ref_idx, mode, action, rec, stride=stride, tokens=tokens,
+                                          threshold=thr, timeout_ms=settings.judge_timeout_ms)
+                    async for ev in pipe.run(anth.deltas(it, st)):
+                        if ev.kind == 'raw':
+                            yield out.raw(ev.info)
+                        elif ev.kind == 'text':
+                            if ev.text:
+                                delivered += ev.text
+                                yield out.text(ev.text)
+                        elif ev.kind == 'verdict':
+                            if ev.info.get('kind') == 'sentence':
+                                verdicts[ev.info['sentence_idx']] = ev.info
+                            yield out.verification(ev.info)
+                        elif ev.kind == 'cut':
+                            yield out.verification({'cut': True, **ev.info})
+                    if st.get('error'):
+                        return
+                    yield out.close_text()
+                    if not rec.cut:
+                        for d in st.get('deferred', []):          # 본문 뒤에 온 블록 (tool_use 등)
+                            yield out.raw(d)
+                    md = st.get('message_delta') or {'type': 'message_delta',
+                                                       'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}}
+                    md = {**md, 'usage': {**(md.get('usage') or {}),
+                                          'output_tokens': (st.get('usage') or {}).get('output_tokens', 0)}}
+                    if rec.cut:
+                        md = {**md, 'delta': {**md.get('delta', {}), 'stop_reason': 'refusal'}}
+                    yield anth.ev('message_delta', md)
+                    if pc_on:                                     # message_stop 앞에 1회 (SPEC §5.3·2.10)
+                        yield out.verification(await _post_check(state['post_checker'], ref, delivered, rec, rec.cut,
+                                                                 settings.post_check_timeout_ms, pc_allow))
+                    yield anth.ev('message_stop', {'type': 'message_stop'})
+                finally:
+                    await resp.aclose()
+                    rec.usage = anth.usage_to_openai(st.get('usage'))
+                    _log(rec, tinfo(response=delivered, sentences=[
+                        {k: v for k, v in x.items() if k in ('sentence_idx', 'start', 'text', 'score', 'hallucinated', 'judge_ms')}
+                        for x in verdicts.values()]))
+
+            return StreamingResponse(agen(), media_type='text/event-stream', headers=vh)
+
         # ---------- 비스트리밍 ----------
         if not body.get('stream'):
             r = await client.post(url, json=body, headers=headers)
@@ -636,9 +812,9 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                 if r.status_code == 200:                 # 검증을 끈 요청도 기록 (오류는 바깥에서 상태 코드로 기록)
                     _txt = ''
                     try:
-                        _d = r.json(); rec.usage, rec.model = _d.get('usage'), _d.get('model', '')
-                        _txt = (_d.get('choices') or [{}])[0].get('message', {}).get('content') or ''
-                    except (ValueError, AttributeError, IndexError):
+                        _d = r.json(); rec.usage, rec.model = usage_of(_d), _d.get('model', '')
+                        _txt = text_of(_d)
+                    except (ValueError, AttributeError, IndexError, TypeError):
                         pass
                     rec.t_client_done = rec.now()
                     _log(rec, tinfo(response=_txt))
@@ -647,56 +823,29 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                     trace_error(r.status_code, r.content)
                 return Response(r.content, status_code=r.status_code, media_type='application/json', headers=vh)
             data = r.json()
-            rec.usage, rec.model = data.get('usage'), data.get('model', '')
-            content = data['choices'][0]['message'].get('content') or ''
-            thr = judge.threshold_for(0)                  # 비스트리밍은 문장 끝에서만 판정
-            ref_idx = await _prepare(judge, ref, rec)
-            rec.threshold = thr
-            sp = IncrementalSplitter()
-            sents = sp.feed(content) + sp.flush()
-            results, kept = [], ''
-            for s in sents:
-                if not s.clean or not rec.verified:
-                    kept += s.text
-                    continue
-                reason = None
-                if not is_english(s.clean):
-                    reason = 'non_english'
-                else:
-                    try:
-                        v = await asyncio.wait_for(asyncio.to_thread(judge.judge, ref_idx, s.clean, content[:s.start], thr),
-                                                   settings.judge_timeout_ms / 1000)
-                    except asyncio.TimeoutError:
-                        reason = 'judge_timeout'
-                    except Exception:                                   # noqa: BLE001 — fail-open
-                        reason = 'judge_error'
-                if reason:
-                    rec.verified, rec.unverified_reason = False, reason
-                    kept += s.text
-                    continue
-                results.append({'sentence_idx': s.idx, 'start': s.start, 'text': s.clean, 'score': v.score,
-                                'hallucinated': v.hallucinated, 'judge_ms': v.judge_ms})
-                rec.sentences.append(dict(results[-1]))
-                if v.hallucinated and action == 'cut':
-                    rec.cut = True
-                    break
-                kept += s.text
+            rec.usage, rec.model = usage_of(data), data.get('model', '')
+            content = text_of(data)
+            results, kept, thr0 = await judge_whole(content)
             if rec.cut and mode == 'hold':            # hold+cut: 환각 문장부터 잘라서 반환
-                data['choices'][0]['message']['content'] = kept
-                data['choices'][0]['finish_reason'] = 'content_filter'
-            data['verification'] = {'mode': mode, 'action': action, 'stride': 0, 'threshold': thr,
-                                    'prepare_ms': rec.prepare_ms, 'sentences': results, 'cut': rec.cut,
-                                    'verified': rec.verified,
-                                    **({'collection': coll, 'evidence': ev_info['evidence']} if ev_info else {}),
-                                    **({'trim': trim_info} if trim_info else {}),
-                                    **({'reason': rec.unverified_reason} if not rec.verified else {})}
+                if is_anth:                           # 본문 앞 블록 + 남긴 본문 블록 하나 (SPEC §2.10)
+                    blocks = data.get('content') or []
+                    first = next((i for i, b in enumerate(blocks) if b.get('type') == 'text'), len(blocks))
+                    data['content'] = blocks[:first] + [{'type': 'text', 'text': kept}]
+                    data['stop_reason'] = 'refusal'
+                else:
+                    data['choices'][0]['message']['content'] = kept
+                    data['choices'][0]['finish_reason'] = 'content_filter'
+            data['verification'] = ver_body(results, thr0)
             if pc_on:
                 data['verification']['post_check'] = await _post_check(state['post_checker'], ref, content, rec, rec.cut,
                                                                        settings.post_check_timeout_ms, pc_allow)
             rec.t_client_done = rec.now()
-            _log(rec, tinfo(response=data['choices'][0]['message'].get('content') or '', sentences=results))
+            _log(rec, tinfo(response=text_of(data), sentences=results))
             request.state.hg_logged = True
             return JSONResponse(data, headers=vh)
+
+        if is_anth:
+            return await anth_stream()
 
         # ---------- 스트리밍 ----------
         wants_usage = bool((body.get('stream_options') or {}).get('include_usage'))

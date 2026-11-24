@@ -58,7 +58,7 @@ print('판정기:', os.listdir('student_vark'))
 
 md("## 2. 게이트웨이 코드 (hallugate)\n\n아래 셀들은 파일을 만들기만 한다. 로컬에서 16개 테스트를 통과한 코드와 같다.")
 files = ['hallugate/__init__.py', 'hallugate/config.py', 'hallugate/context.py', 'hallugate/splitter.py',
-         'hallugate/judge.py', 'hallugate/pipeline.py', 'hallugate/tokens.py', 'hallugate/store.py', 'hallugate/postcheck.py', 'hallugate/keys.py', 'hallugate/limits.py', 'hallugate/metrics.py', 'hallugate/prices.py', 'hallugate/prices.json', 'hallugate/trim.py', 'hallugate/traces.py', 'hallugate/app.py', 'serve.py', 'mock_upstream.py',
+         'hallugate/judge.py', 'hallugate/pipeline.py', 'hallugate/tokens.py', 'hallugate/store.py', 'hallugate/postcheck.py', 'hallugate/keys.py', 'hallugate/limits.py', 'hallugate/metrics.py', 'hallugate/prices.py', 'hallugate/prices.json', 'hallugate/trim.py', 'hallugate/traces.py', 'hallugate/anthropic_fmt.py', 'hallugate/app.py', 'serve.py', 'mock_upstream.py',
          'scripts/make_replay_set.py', 'scripts/bench.py', 'scripts/keys.py', 'scripts/warm.py', 'tests/test_gateway.py', 'pytest.ini',
          'hallugate/static/demo.html', 'hallugate/static/admin.html', 'hallugate/static/console.html', 'hallugate/static/start.html']
 code("import os\nos.makedirs('gateway/hallugate/static', exist_ok=True)")

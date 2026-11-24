@@ -17,6 +17,8 @@ class Settings:
     upstream_base_url: str = field(default_factory=lambda: _env('UPSTREAM_BASE_URL', 'https://api.openai.com/v1'))
     upstream_api_key: str = field(default_factory=lambda: _env('UPSTREAM_API_KEY', ''))
     upstream_timeout: float = field(default_factory=lambda: _env('UPSTREAM_TIMEOUT', 120.0, float))
+    # Anthropic Messages 형식 /v1/messages의 셀프호스팅 업스트림 (SPEC §2.10)
+    anthropic_base_url: str = field(default_factory=lambda: _env('ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1'))
 
     # 판정기 폴더 (모델 v1.0 = F1 base). judge_config.json이 있으면 아래 None 값들을 거기서 채운다.
     judge_model_dir: str = field(default_factory=lambda: _env('JUDGE_MODEL_DIR', 'judge_base'))

@@ -130,6 +130,26 @@ for chunk in stream:
        "messages": [{"role": "user", "content": "How did the company do in 2023?"}],
        "verification": {"context": "Hanbit Robotics was founded in 2011 ..."}}'</code></pre>
 
+  <h3>Claude 공식 SDK (Anthropic Messages 형식)</h3>
+  <p>이미 <code>anthropic</code> SDK로 Claude를 부르고 있다면 그대로 두고 <code>base_url</code>과 헤더만 바꾸면 됩니다(<code>/v1/messages</code>). 근거는 <code>system</code>이나 메시지 안 <code>&lt;context&gt;</code> 태그, 또는 <code>extra_body</code>로 줍니다.</p>
+<pre><button class="copy">복사</button><code>import anthropic
+
+client = anthropic.Anthropic(
+    base_url="<span class="origin"></span>",                          # /v1 없이
+    api_key="&lt;내 Anthropic 키&gt;",
+    default_headers={"x-hallugate-key": "hg_..."},
+)
+msg = client.messages.create(
+    model="claude-sonnet-5-5", max_tokens=1024,
+    system=f"Answer in English using only the document.\n&lt;context&gt;{document}&lt;/context&gt;",
+    messages=[{"role": "user", "content": "How did the company do in 2023?"}],
+)
+print(msg.content[0].text)                                          # 본문: 평소와 똑같이
+for s in msg.model_extra["verification"]["sentences"]:              # 판정: 최상위 verification 필드
+    if s["hallucinated"]:
+        print("[환각 의심]", s["text"])</code></pre>
+  <p>스트리밍(<code>client.messages.stream(...)</code>)도 그대로 동작합니다. 본문은 <code>text</code> 블록 하나로 오고, 판정은 이름이 <code>verification</code>인 SSE 이벤트로 섞여 옵니다. SDK는 이 이벤트를 건너뛰므로, 판정을 실시간으로 보려면 SSE를 직접 읽으세요(<code>event: verification</code>). 본문 뒤의 <code>tool_use</code> 블록은 본문을 다 보낸 뒤에 옵니다.</p>
+
   <h2>3. 받는 것</h2>
   <ul>
     <li><b>본문 청크</b>: OpenAI 형식 그대로</li>

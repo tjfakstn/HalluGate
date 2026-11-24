@@ -927,7 +927,8 @@ def _hosted_gw(tmp_path, **kw):
     sent = []
 
     async def hook(req):
-        sent.append({**json.loads(req.content), '_host': req.url.host, '_auth': req.headers.get('authorization')})
+        sent.append({**json.loads(req.content), '_host': req.url.host, '_auth': req.headers.get('authorization'),
+                     '_xkey': req.headers.get('x-api-key'), '_path': req.url.path, '_ver': req.headers.get('anthropic-version')})
     up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock',
                            event_hooks={'request': [hook]})
     limiter, checker = kw.pop('limiter', None), kw.pop('post_checker', None)
@@ -1610,3 +1611,192 @@ def test_cold_starts_match_own_window():
     ok = [{'ts': 210, 'cold': True, 'ttft_ms': 805}, {'ts': 220, 'cold': False, 'ttft_ms': 50},
           {'ts': 310, 'cold': True, 'ttft_ms': 900}]
     assert [c['first_ttft_ms'] for c in _cold_starts(starts, ok)] == [None, 805, 900]
+
+
+
+# ---------------- Anthropic Messages 형식 (SPEC §2.10) ----------------
+def _anth(client, key, **h):
+    import anthropic
+    import httpx2                                   # 최신 anthropic SDK는 httpx2를 쓴다
+    hc = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=client._transport.app))
+    return anthropic.AsyncAnthropic(api_key='sk-ant-user-123', base_url='http://gw', http_client=hc, max_retries=0,
+                                    default_headers={**_K(key), **h})
+
+
+def _mb(resp, mode='hold', action='flag', ver=None, **mock):
+    return dict(model='mock', max_tokens=256, messages=[{'role': 'user', 'content': 'q'}],
+                extra_body={'verification': ver if ver is not None else {'context': REF, 'mode': mode, 'action': action},
+                            'mock_response': resp, 'mock_ttft_ms': 0, 'mock_token_ms': 0, **mock})
+
+
+async def _raw_events(client, key, kw, **h):
+    body = {k: v for k, v in kw.items() if k != 'extra_body'} | kw.get('extra_body', {}) | {'stream': True}
+    r = await client.post('/v1/messages', json=body, headers={**_K(key), 'x-api-key': 'sk-ant-user-123',
+                                                              'anthropic-version': '2023-06-01', **h})
+    assert r.status_code == 200, r.text
+    evs, name = [], None
+    for line in r.text.splitlines():
+        if line.startswith('event:'):
+            name = line[6:].strip()
+        elif line.startswith('data:'):
+            evs.append((name, json.loads(line[5:])))
+    return r, evs
+
+
+def _check_blocks(evs):
+    """블록 index가 0부터 차례로, 열린 블록에만 delta가 가는지 (SDK가 기대하는 구조)."""
+    open_, nxt = None, 0
+    for n, d in evs:
+        if n == 'content_block_start':
+            assert open_ is None and d['index'] == nxt
+            open_, nxt = d['index'], nxt + 1
+        elif n == 'content_block_delta':
+            assert d['index'] == open_
+        elif n == 'content_block_stop':
+            assert d['index'] == open_
+            open_ = None
+    assert open_ is None
+
+
+def _text(evs):
+    return ''.join(d['delta']['text'] for n, d in evs if n == 'content_block_delta' and d['delta']['type'] == 'text_delta')
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_sdk_nonstream(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    _, k = ks.create('alice')
+    a = _anth(client, k)
+    msg = await a.messages.create(**_mb(BAD_2ND))
+    assert ''.join(b.text for b in msg.content if b.type == 'text') == BAD_2ND
+    ver = msg.model_extra['verification']
+    bad = [x for x in ver['sentences'] if x['hallucinated']]
+    assert len(ver['sentences']) == 3 and len(bad) == 1 and 'flew rockets' in bad[0]['text'] and ver['verified']
+    up = sent[-1]
+    assert up['_path'] == '/v1/messages' and up['_host'] == 'up-anth' and 'verification' not in up and up['_ver']
+    # SDK 버전에 따라 x-api-key 또는 Authorization: Bearer로 보낸다 — 어느 쪽이든 사용자 키 그대로 전달
+    assert 'sk-ant-user-123' in f"{up['_xkey']} {up['_auth']}"
+    cut = await a.messages.create(**_mb(BAD_2ND, action='cut', mock_tool_use='lookup'))
+    txt = ''.join(b.text for b in cut.content if b.type == 'text')
+    assert BAD_2ND.startswith(txt) and 'rockets' not in txt and txt.strip() and cut.stop_reason == 'refusal'
+    assert [b.type for b in cut.content] == ['text']                       # 환각 뒤 블록은 빠짐
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_sdk_stream_blocks(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    _, k = ks.create('alice')
+    a = _anth(client, k)
+    kw = _mb(BAD_2ND, mock_thinking='plan first', mock_tool_use='lookup')
+    async with a.messages.stream(**kw) as stream:                          # 공식 SDK 스트림 도우미가 그대로 동작
+        final = await stream.get_final_message()
+    assert [b.type for b in final.content] == ['thinking', 'text', 'tool_use']
+    assert final.content[0].thinking == 'plan first' and final.content[1].text == BAD_2ND
+    assert final.content[2].input == {'q': 1} and final.stop_reason == 'tool_use' and final.usage.output_tokens == 9
+
+    r, evs = await _raw_events(client, k, kw)
+    names = [n for n, _ in evs]
+    assert names[0] == 'message_start' and names[-1] == 'message_stop' and 'ping' not in names
+    assert names.index('message_delta') < names.index('message_stop')
+    _check_blocks(evs)
+    starts = [d['content_block']['type'] for n, d in evs if n == 'content_block_start']
+    assert starts == ['thinking', 'text', 'tool_use'] and _text(evs) == BAD_2ND
+    vs = [d for n, d in evs if n == 'verification']
+    assert all(d['type'] == 'verification' for d in vs)
+    sents = [d for d in vs if d.get('kind') == 'sentence']
+    assert len(sents) == 3 and [d['hallucinated'] for d in sents] == [False, True, False]
+
+    parts = ['The company was founded in 1998 in Seoul. ', 'It reported revenue of 2 billion dollars in 2023.']
+    r, evs = await _raw_events(client, k, _mb(parts, mock_citation=True))  # text 블록 여럿 → 하나로, citations 안 보냄
+    _check_blocks(evs)
+    assert [d['content_block']['type'] for n, d in evs if n == 'content_block_start'] == ['text']
+    assert _text(evs) == ''.join(parts) and 'citations_delta' not in json.dumps(evs)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_stream_cut_and_off(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    _, k = ks.create('alice')
+    r, evs = await _raw_events(client, k, _mb(BAD_2ND, action='cut', mock_tool_use='lookup'))
+    names = [n for n, _ in evs]
+    _check_blocks(evs)
+    assert 'rockets' not in _text(evs) and BAD_2ND.startswith(_text(evs))
+    assert names[-4:] == ['verification', 'content_block_stop', 'message_delta', 'message_stop']
+    assert evs[-4][1]['cut'] is True and evs[-2][1]['delta']['stop_reason'] == 'refusal'
+    assert 'tool_use' not in json.dumps(evs)
+    r, evs = await _raw_events(client, k, _mb(GOOD, mode='off', mock_citation=True))   # 검증 끔 → 그대로
+    names = [n for n, _ in evs]
+    assert 'ping' in names and 'verification' not in names and 'citations_delta' in json.dumps(evs) and _text(evs) == GOOD
+    rows = [x for x in _rows(s.keys_db) if x['status'] == 200]
+    assert len(rows) == 2 and all(x['tokens_in'] == 7 and x['tokens_cached'] == 2 for x in rows)
+    assert rows[-1]['tokens_out'] == 9 and rows[-1]['mode'] == 'off'
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_context_sources(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path, collection_chunk_words=12, collection_overlap=2)
+    _, k = ks.create('alice')
+    a = _anth(client, k)
+    for system in (f'Use the docs.\n<context>{REF}</context>',
+                   [{'type': 'text', 'text': 'Use the docs.'}, {'type': 'text', 'text': f'<context>{REF}</context>'}]):
+        kw = _mb(BAD_2ND, ver={}); kw['system'] = system                   # system 안 태그가 근거
+        msg = await a.messages.create(**kw)
+        ver = msg.model_extra['verification']
+        assert sum(x['hallucinated'] for x in ver['sentences']) == 1 and sent[-1]['system'] == system
+
+    await client.post('/v1/collections/kb/documents', json={'text': DOC_A, 'doc_id': 'a'}, headers=_K(k))
+    for system in (None, 'Be brief.', [{'type': 'text', 'text': 'Be brief.'}]):
+        kw = _mb(GOOD, ver={'collection': 'kb'}); kw['messages'][0]['content'] = 'When was the company founded and what was its revenue?'
+        if system is not None:
+            kw['system'] = system
+        msg = await a.messages.create(**kw)
+        assert msg.model_extra['verification']['evidence']
+        up = sent[-1]['system']
+        first = up if isinstance(up, str) else up[0]['text']
+        assert 'founded in 1998' in first and '<documents>' in first       # 근거가 system 맨 앞에
+        if system == 'Be brief.':
+            assert up.endswith('Be brief.')
+        if isinstance(system, list):
+            assert up[-1] == {'type': 'text', 'text': 'Be brief.'}
+
+    q = 'When was the company founded and what was its revenue?'
+    kw = _mb(GOOD, ver={'trim': {'top_k': 2}})
+    kw['messages'][0]['content'] = [{'type': 'text', 'text': f'<context>{LONG_REF}</context>\n{q}'}]
+    msg = await a.messages.create(**kw)                                    # 블록 목록 안 태그도 근거 다이어트
+    sent_txt = sent[-1]['messages'][0]['content'][0]['text']
+    assert msg.model_extra['verification']['trim']['chunks_kept'] == 2 and len(sent_txt) < len(LONG_REF) and q in sent_txt
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_hosted_rules_and_trace(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    _, k = ks.create('alice')
+    body = {'model': 'mock', 'max_tokens': 64, 'messages': [{'role': 'user', 'content': 'q'}],
+            'verification': {'context': REF}, 'mock_response': GOOD, 'mock_ttft_ms': 0, 'mock_token_ms': 0}
+    assert (await client.post('/v1/messages', json=body)).status_code == 401
+    r = await client.post('/v1/messages', json=body, headers={**_K(k), 'x-upstream': 'openai'})
+    assert r.status_code == 400 and len(sent) == 0
+    a = _anth(client, k, **{'x-hallugate-trace': '1'})
+    raw = await a.messages.with_raw_response.create(**_mb(BAD_2ND))
+    tid = raw.headers['x-hallugate-trace-id']
+    d = (await client.get(f'/v1/traces/{tid}', headers=_K(k))).json()
+    assert d['request']['messages'] == [{'role': 'user', 'content': 'q'}] and d['request']['max_tokens'] == 256
+    assert d['response'] == BAD_2ND and d['n_flagged'] == 1 and d['summary']['tokens_in'] == 7
+    assert 'sk-ant-user-123' not in json.dumps(d)
+    row = [x for x in _rows(s.keys_db) if x['status'] == 200][-1]
+    assert row['traced'] and row['tokens_out'] == 9 and 'rockets' not in json.dumps(row)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_selfhosted(tmp_path):
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
+    s = Settings(anthropic_base_url='http://mock/v1', metrics_path='', stride_tokenizer='words', collection_db='')
+    app = create_app(s, judge=LexicalJudge(threshold=0.5), http_client=up)
+    c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://gw')
+    import anthropic
+    import httpx2
+    a = anthropic.AsyncAnthropic(api_key='sk-ant-x', base_url='http://gw', max_retries=0,
+                                 http_client=httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app)))
+    async with a.messages.stream(**_mb(BAD_2ND)) as stream:
+        final = await stream.get_final_message()
+    assert final.content[0].text == BAD_2ND
