@@ -185,6 +185,7 @@ for s in msg.model_extra["verification"]["sentences"]:              # 판정: �
   <h2>7. 한도 · 사용량 · 개인정보</h2>
   <ul>
     <li>기본 한도: 분당 30요청, 동시 4개, 근거 5만 자, 하루 2단 검증 50회. 넘으면 429(<code>retry-after</code>) 또는 413</li>
+    <li>검증은 답 하나만 다룹니다. <code>n</code>을 2 이상으로 주면 400이므로, 여러 답이 필요하면 <code>"verification": {"mode": "off"}</code>로 보내세요</li>
     <li>내 토큰·추정 비용·검증 결과는 <a href="/console">내 사용 현황</a>에서 봅니다(API: <code>GET /v1/usage?window=30d</code>). 월 예산을 받았으면 응답 헤더 <code>x-budget-used</code>로 사용률이 옵니다</li>
     <li>LLM 키는 어디에도 기록하지 않습니다. 질문·근거·응답 원문은 위 요청 기록을 켠 요청만 7일 남고, 그 밖에는 시간·토큰 수·판정 수 같은 숫자만 30일 보관합니다. 키 전체 데이터 삭제는 운영자에게 요청하세요</li>
   </ul>

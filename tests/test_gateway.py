@@ -1800,3 +1800,19 @@ async def test_anthropic_messages_selfhosted(tmp_path):
     async with a.messages.stream(**_mb(BAD_2ND)) as stream:
         final = await stream.get_final_message()
     assert final.content[0].text == BAD_2ND
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stream', [True, False])
+async def test_multiple_choices_rejected_when_verifying(tmp_path, stream):
+    # n ≥ 2는 답이 섞여 본문 보존이 깨지므로 검증을 켠 요청에서 거절 (SPEC §2.1, A17)
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    _, k = ks.create('alice')
+    c = _hc(client, k)
+    b = body(GOOD, 'hold', stream=stream); b['n'] = 2
+    r = await c.post('/v1/chat/completions', json=b)
+    assert r.status_code == 400 and 'n' in r.json()['error']['message'] and sent == []
+    b = body(GOOD, 'off', stream=stream); b['n'] = 2
+    assert (await c.post('/v1/chat/completions', json=b)).status_code == 200 and sent[-1]['n'] == 2
+    b = body(GOOD, 'hold', stream=stream); b['n'] = 1
+    assert (await c.post('/v1/chat/completions', json=b)).status_code == 200

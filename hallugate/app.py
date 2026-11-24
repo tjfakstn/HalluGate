@@ -555,6 +555,9 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
                                                                    default_stride(), with_stride=True, with_opts=True)
         except ValueError as e:
             return _err(str(e))
+        if not is_anth and mode != 'off' and body.get('n') not in (None, 1):
+            # 판정은 답 하나만 다룬다 — 여러 답의 글자가 섞이지 않게 거절 (SPEC §2.1, A17)
+            return _err('n must be 1 (or omitted) when verification is on; set verification.mode to "off" for multiple choices')
         if tenant is not None and ref and len(ref) > settings.max_ref_chars:
             return _err(f'reference longer than {settings.max_ref_chars} characters', 413, 'request_too_large')
 
