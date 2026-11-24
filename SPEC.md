@@ -472,3 +472,13 @@ J1은 미달, J2(탐지 최대화)는 보류 중이므로 **기본값은 꺼짐*
   - 모든 응답에 `x-budget-used`(0~1+, 둘 다 있으면 큰 쪽)를 싣고, 80% 이상이면 `x-budget-warning: near`, 100% 이상이면 `exceeded`
   - `block`이고 이미 100% 이상이면 429 `insufficient_quota`(업스트림 안 부름). 사용량은 요청이 끝난 뒤 더하므로 마지막 요청 하나만큼 넘을 수 있다
 - 관리자 통계(§10.6)에 토큰·추정 비용(키별·모델별)을 더한다
+
+### 10.11 운영자·사용자 화면 ✅
+`/demo`처럼 외부 리소스 없는 HTML 한 장씩. 화면은 이미 있는 API만 부르고, 원문 없이 숫자만 보인다(§10.5). 토큰·키는 그 브라우저 탭 저장소(sessionStorage)에만 둔다. 운영 모드가 아니면 404.
+- **집계 보강** (`/admin/stats`와 `/v1/usage` 공통, 기간 안 200 응답 기준)
+  - `verification`: `responses`(검증을 켠 응답 수, `mode≠off`), `fully_verified`(끝까지 검증된 수), `responses_flagged`(환각 문장이 하나라도 있는 응답 수), `sentences_judged`(판정한 문장 수), `sentences_flagged`(환각 판정 문장 수), `flag_rate`(= sentences_flagged / sentences_judged, 판정 문장이 없으면 null), `unverified_by_reason`(검증 중단 이유별 수)
+  - `trim`: `requests`(근거 다이어트를 쓴 응답 수), `chars_before`, `chars_after`, `saved_ratio`(= 1 − after/before, 쓴 요청이 없으면 null)
+- **운영자 화면 `GET /admin`** ✅: 관리자 토큰을 넣으면 `/admin/stats`를 기간(1h·24h·7d·30d)별로 보인다 — 요청·상태 코드·업스트림, 지연(첫 글자 p50/p95·판정 p95, 목표 68ms 대비), 검증(환각 비율·검증 중단 이유), LLM 토큰·추정 비용(모델별·키별 요청 수), 2단 검증 비용, 근거 다이어트 절감, 콜드 스타트 기록. 키 목록·발급(이름·한도)·폐기(선택: 데이터 삭제)를 `/admin/keys` API로 한다. 새 키는 발급 직후 한 번만 보인다. 컨테이너 켜기·끄기는 Modal 설정이라 화면에 두지 않는다(`scripts/warm.py`)
+- **사용자 화면 `GET /console`** ✅: 게이트웨이 키를 넣으면 `/v1/usage`로 자기 것만 보인다 — 요청 수, 검증·환각 수치, 모델별 토큰·추정 비용, 이번 달 예산, 근거 다이어트 절감
+- **시작 안내 `GET /start`** ✅: 사용자에게 줄 연결 방법(주소·헤더·`verification` 옵션·OpenAI SDK 예시·한도·영어 한정)
+

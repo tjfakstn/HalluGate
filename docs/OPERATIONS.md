@@ -127,6 +127,8 @@ stream = client.chat.completions.create(model="gpt-4o-mini", stream=True, messag
 
 ## 4. 관측
 
+**운영자 화면 `$HG/admin`**: 관리자 토큰을 넣으면 아래 통계와 키 목록을 표·숫자 카드로 본다. 키 발급(이름·한도)·폐기도 여기서 할 수 있다(새 키는 발급 직후 한 번만 보임). 사용자에게는 `$HG/start`(연결 방법)와 `$HG/console`(자기 사용 현황)을 안내한다.
+
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" "$HG/admin/stats?window=24h"
 ```

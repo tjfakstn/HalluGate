@@ -1457,3 +1457,48 @@ def test_warm_auto_cooldown():
     assert cli.cooldown(b, now=4999.0) is False and b.min == 1              # 아직
     assert cli.cooldown(b, now=5001.0) is True and b.min == 0 and 'until' not in b.state
     assert cli.cooldown(b, now=9999.0) is False                              # 켠 적 없으면 그대로
+
+
+# ---------------- 운영자·사용자 화면 (SPEC §10.11) ----------------
+@pytest.mark.asyncio
+async def test_verification_trim_totals(tmp_path):
+    client, s, st, ks, sent = _hosted_gw(tmp_path, collection_chunk_words=12, collection_overlap=2)
+    _, ka = ks.create('alice'); _, kb = ks.create('bob')
+    a, b = _hc(client, ka), _hc(client, kb)
+    await a.post('/v1/chat/completions', json=body(GOOD, 'hold'))                  # 2문장, 환각 0
+    await a.post('/v1/chat/completions', json=body(BAD_2ND, 'hold'))               # 3문장, 환각 1
+    await a.post('/v1/chat/completions', json=body(GOOD, 'off'))                   # 검증 끔 → 집계 제외
+    await a.post('/v1/chat/completions', json=_trim_body(GOOD, 'field', {'top_k': 2}))
+    await b.post('/v1/chat/completions', json=body(BAD_2ND, 'hold'))
+    A = {'Authorization': 'Bearer adm'}
+    v = (await client.get('/admin/stats?window=1h', headers=A)).json()['verification']
+    assert v['responses'] == 4 and v['responses_flagged'] == 2 and v['fully_verified'] == 4
+    assert v['sentences_flagged'] == 2 and v['sentences_judged'] >= 10
+    assert v['flag_rate'] == pytest.approx(v['sentences_flagged'] / v['sentences_judged'])
+    assert v['unverified_by_reason'] == {}
+    tr = (await client.get('/admin/stats?window=1h', headers=A)).json()['trim']
+    assert tr['requests'] == 1 and tr['chars_after'] < tr['chars_before'] and 0 < tr['saved_ratio'] < 1
+    u = (await a.get('/v1/usage?window=1h')).json()                                # 사용자 본인 것만
+    assert u['verification']['responses'] == 3 and u['verification']['responses_flagged'] == 1
+    assert u['trim']['requests'] == 1
+    ub = (await b.get('/v1/usage?window=1h')).json()
+    assert ub['verification']['responses'] == 1 and ub['trim'] == {'requests': 0, 'chars_before': 0, 'chars_after': 0,
+                                                                     'saved_ratio': None}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('path,needs', [('/admin', ['/admin/stats', '/admin/keys', 'revoke']),
+                                        ('/console', ['/v1/usage', 'x-hallugate-key']),
+                                        ('/start', ['x-hallugate-key', 'verification', 'base_url'])])
+async def test_hosted_pages(tmp_path, path, needs):
+    client, s, st, ks, sent = _hosted_gw(tmp_path)
+    r = await client.get(path)
+    assert r.status_code == 200 and r.headers['content-type'].startswith('text/html')
+    for n in needs:
+        assert n in r.text
+    assert 'https://' not in r.text and 'http://' not in r.text.replace('http://www.w3.org', '')   # 외부 리소스 없음
+    up = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock_upstream.app), base_url='http://mock')
+    plain = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(
+        Settings(upstream_base_url='http://mock/v1', metrics_path='', collection_db=''), judge=LexicalJudge(), http_client=up)),
+        base_url='http://gw')
+    assert (await plain.get(path)).status_code == 404                              # 운영 모드 전용

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hallugate 시작 안내</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #677085; --line: #e2e5eb;
+  --accent: #3157d5; --ok-bg: #e3f5ea; --ok-ink: #17613a; --bad-bg: #fde2e1; --bad-ink: #a4231c;
+  --warn-bg: #fdf0e0; --warn-ink: #8a4b0f; --soft: #eef0f4; --code: #f1f3f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b1f27; --ink: #e6e9ef; --muted: #98a1b3; --line: #2c3240;
+    --accent: #7d9bff; --ok-bg: #173826; --ok-ink: #8fe0ad; --bad-bg: #4a1d1b; --bad-ink: #ffb3ad;
+    --warn-bg: #43301a; --warn-ink: #f3c38b; --soft: #252a35; --code: #232835;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { margin: 0; font-size: 18px; }
+header nav { display: flex; gap: 12px; font-size: 13px; }
+header nav a { color: var(--muted); text-decoration: none; }
+header nav a:hover, header nav a.on { color: var(--accent); }
+.auth { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.auth input { width: 220px; }
+main { padding: 16px 24px 40px; max-width: 1300px; margin: 0 auto; }
+@media (max-width: 760px) { main { padding: 12px 16px 32px; } header { padding: 12px 16px; } .auth { margin-left: 0; width: 100%; } .auth input { flex: 1; width: auto; } }
+input, select, button { font: inherit; }
+input[type=text], input[type=password], input[type=number], select {
+  color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
+button { border-radius: 6px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--bad-ink); }
+button:disabled { opacity: .5; cursor: default; }
+.bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.bar .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.bar .seg button { border: 0; border-radius: 0; padding: 5px 12px; background: var(--panel); }
+.bar .seg button.on { background: var(--accent); color: #fff; }
+.muted { color: var(--muted); font-size: 12px; }
+.msg { border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; display: none; }
+.msg.show { display: block; }
+.msg.err { background: var(--bad-bg); color: var(--bad-ink); }
+.msg.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.kpi .k { font-size: 12px; color: var(--muted); }
+.kpi .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.kpi .s { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.kpi.good .v { color: var(--ok-ink); }
+.kpi.warn .v { color: var(--warn-ink); }
+.kpi.bad .v { color: var(--bad-ink); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.card h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+.wide { margin-top: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.scroll { overflow-x: auto; }
+.empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
+.pill { display: inline-block; font-size: 11px; border-radius: 4px; padding: 0 6px; }
+.pill.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.pill.off { background: var(--soft); color: var(--muted); }
+form.newkey { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; align-items: end; margin-top: 10px; }
+form.newkey label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 3px; }
+form.newkey input, form.newkey select { width: 100%; }
+.newsecret { margin-top: 10px; background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 10px 12px; display: none; }
+.newsecret code { display: block; margin: 6px 0; padding: 6px 8px; background: var(--code); color: var(--ink); border-radius: 6px; word-break: break-all; font-size: 12px; }
+article { max-width: 860px; margin: 0 auto; }
+article h2 { font-size: 17px; margin: 28px 0 8px; color: var(--ink); }
+article h3 { font-size: 14px; margin: 18px 0 6px; }
+article p, article li { font-size: 14px; }
+pre { background: var(--code); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; position: relative; }
+code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); border-radius: 4px; padding: 0 4px; }
+pre code { background: none; padding: 0; }
+.copy { position: absolute; top: 8px; right: 8px; font-size: 11px; padding: 2px 8px; }
+.note { background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+td code { white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>hallugate</h1>
+  <nav><a href="/console">내 사용 현황</a><a class="on" href="/start">시작 안내</a><a href="/demo">데모</a></nav>
+</header>
+<main><article>
+  <p>hallugate는 LLM API 앞에 두는 <b>검증 게이트웨이</b>입니다. 지금 쓰는 OpenAI 호환 코드에서 <b>주소와 헤더만 바꾸면</b>, LLM 답이 흘러나오는 동안 문장마다 근거 문서와 맞춰 보고 근거와 어긋나거나 근거에 없는 문장(환각)을 표시합니다. 답 본문은 그대로 전달됩니다.</p>
+  <div class="note">현재 초대제 베타입니다. <b>영어 RAG 응답만</b> 검증합니다(판정기가 영어로만 학습됨). 영어가 아니면 본문은 그대로 전달하고 검증 결과만 <code>verified: false</code>로 알립니다. 서버가 쉬고 있으면 첫 요청에 20초 정도 걸릴 수 있습니다.</div>
+
+  <h2>1. 필요한 것</h2>
+  <ul>
+    <li><b>게이트웨이 키</b> <code>hg_...</code> — 운영자에게 받습니다. 헤더 <code>x-hallugate-key</code>로 보냅니다</li>
+    <li><b>내 LLM API 키</b> — OpenAI 또는 Anthropic. 게이트웨이는 고른 업체에만 전달하고 저장·기록하지 않습니다</li>
+    <li><b>업체 선택</b> — 헤더 <code>x-upstream: openai</code> 또는 <code>anthropic</code></li>
+  </ul>
+
+  <h2>2. 연결 (OpenAI Python SDK)</h2>
+<pre><button class="copy">복사</button><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="<span class="origin"></span>/v1",
+    api_key="&lt;내 OpenAI 또는 Anthropic 키&gt;",
+    default_headers={"x-hallugate-key": "hg_...", "x-upstream": "openai"},   # Claude면 "anthropic"
+)
+
+document = "Hanbit Robotics was founded in 2011 in Daejeon ..."   # 검색한 근거 문서 (영어)
+stream = client.chat.completions.create(
+    model="gpt-4o-mini",                                            # Claude면 예: "claude-sonnet-5-5"
+    stream=True,
+    messages=[{"role": "user", "content": f"&lt;context&gt;{document}&lt;/context&gt;\n\nHow did the company do in 2023?"}],
+)
+for chunk in stream:
+    if chunk.choices and chunk.choices[0].delta.content:            # 본문: 평소와 똑같이 옵니다
+        print(chunk.choices[0].delta.content, end="")
+    v = getattr(chunk, "verification", None) or (chunk.model_extra or {}).get("verification")
+    if v and v.get("kind") == "sentence" and v.get("hallucinated"): # 판정: choices가 빈 별도 청크로 옵니다
+        print(f"\n[환각 의심] {v['text']}")</code></pre>
+  <p>근거는 메시지 안 <code>&lt;context&gt;…&lt;/context&gt;</code> 태그로 넣거나, 메시지에 넣지 않고 <code>extra_body={"verification": {"context": document}}</code>로 따로 줄 수 있습니다. 근거가 없으면 검증하지 않고 그대로 전달합니다.</p>
+
+  <h3>curl</h3>
+<pre><button class="copy">복사</button><code>curl <span class="origin"></span>/v1/chat/completions \
+  -H "x-hallugate-key: hg_..." -H "x-upstream: openai" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" -H "content-type: application/json" \
+  -d '{"model": "gpt-4o-mini", "stream": true,
+       "messages": [{"role": "user", "content": "How did the company do in 2023?"}],
+       "verification": {"context": "Hanbit Robotics was founded in 2011 ..."}}'</code></pre>
+
+  <h2>3. 받는 것</h2>
+  <ul>
+    <li><b>본문 청크</b>: OpenAI 형식 그대로</li>
+    <li><b>판정 청크</b>: <code>choices: []</code>이고 <code>verification</code> 필드가 있는 청크. 문장마다 <code>{"kind": "sentence", "text", "score", "hallucinated", "start", "upto"}</code>(문장이 끝나기 전 앞부분 경보는 <code>"kind": "prefix"</code>). 기존 OpenAI 클라이언트는 이 청크를 무시하므로 코드가 깨지지 않습니다</li>
+    <li><b>검증 중단</b>: <code>{"kind": "unverified", "verified": false, "reason": "non_english" | "judge_timeout" | "judge_error"}</code> 한 번 — 이후 본문은 판정 없이 계속 전달됩니다</li>
+  </ul>
+
+  <h2>4. 옵션 (<code>verification</code>)</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>필드</th><th>값</th><th>뜻</th></tr></thead>
+    <tbody>
+      <tr><td><code>context</code></td><td>문자열 또는 목록</td><td>근거 문서. 없으면 메시지의 <code>&lt;context&gt;</code> 태그를 씁니다</td></tr>
+      <tr><td><code>mode</code></td><td><code>hold</code> | <code>pass</code> | <code>off</code></td><td><code>hold</code>: 문장을 판정한 뒤 내보냄(기본) · <code>pass</code>: 바로 내보내고 판정은 뒤따라옴 · <code>off</code>: 검증 안 함</td></tr>
+      <tr><td><code>action</code></td><td><code>flag</code> | <code>cut</code></td><td><code>flag</code>: 표시만(기본) · <code>cut</code>: 환각 문장에서 응답을 끊음</td></tr>
+      <tr><td><code>trim</code></td><td><code>true</code> 또는 <code>{"top_k": n}</code></td><td><b>LLM 비용 절감</b>: 긴 근거에서 질문과 관련된 조각 8개만 LLM에 보냅니다(실험에서 입력 토큰 약 48% 절감, 답 품질 유지). 이때 근거는 <code>context</code> 필드로 주세요</td></tr>
+      <tr><td><code>collection</code></td><td>컬렉션 이름</td><td>미리 올린 문서에서 근거를 찾아 넣습니다(아래)</td></tr>
+      <tr><td><code>post_check</code></td><td><code>true</code></td><td>실험 기능: 답이 끝난 뒤 Claude로 한 번 더 검증(하루 한도 있음)</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>5. 문서 올려 두고 쓰기 (선택)</h2>
+<pre><button class="copy">복사</button><code>curl <span class="origin"></span>/v1/collections/kb/documents -H "x-hallugate-key: hg_..." \
+  -H "content-type: application/json" -d '{"doc_id": "about", "title": "About us", "text": "..."}'</code></pre>
+  <p>그다음 채팅 요청에 <code>"verification": {"collection": "kb"}</code>를 주면 질문으로 관련 조각을 찾아 LLM에 넣고 같은 조각으로 검증합니다. 컬렉션은 내 키에만 보입니다.</p>
+
+  <h2>6. 한도 · 사용량 · 개인정보</h2>
+  <ul>
+    <li>기본 한도: 분당 30요청, 동시 4개, 근거 5만 자, 하루 2단 검증 50회. 넘으면 429(<code>retry-after</code>) 또는 413</li>
+    <li>내 토큰·추정 비용·검증 결과는 <a href="/console">내 사용 현황</a>에서 봅니다(API: <code>GET /v1/usage?window=30d</code>). 월 예산을 받았으면 응답 헤더 <code>x-budget-used</code>로 사용률이 옵니다</li>
+    <li>질문·근거·응답 원문과 LLM 키는 기록하지 않습니다. 시간·토큰 수·판정 수 같은 숫자만 30일 보관합니다. 데이터 삭제는 운영자에게 요청하세요</li>
+  </ul>
+</article></main>
+<script>
+document.querySelectorAll('.origin').forEach(s => s.textContent = location.origin);
+document.querySelectorAll('pre .copy').forEach(b => b.onclick = async () => {
+  try { await navigator.clipboard.writeText(b.parentElement.querySelector('code').innerText); b.textContent = '복사됨'; } catch (e) {}
+});
+</script>
+</body>
+</html>

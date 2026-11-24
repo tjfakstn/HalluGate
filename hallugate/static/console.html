@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hallugate 내 사용 현황</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #677085; --line: #e2e5eb;
+  --accent: #3157d5; --ok-bg: #e3f5ea; --ok-ink: #17613a; --bad-bg: #fde2e1; --bad-ink: #a4231c;
+  --warn-bg: #fdf0e0; --warn-ink: #8a4b0f; --soft: #eef0f4; --code: #f1f3f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b1f27; --ink: #e6e9ef; --muted: #98a1b3; --line: #2c3240;
+    --accent: #7d9bff; --ok-bg: #173826; --ok-ink: #8fe0ad; --bad-bg: #4a1d1b; --bad-ink: #ffb3ad;
+    --warn-bg: #43301a; --warn-ink: #f3c38b; --soft: #252a35; --code: #232835;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { margin: 0; font-size: 18px; }
+header nav { display: flex; gap: 12px; font-size: 13px; }
+header nav a { color: var(--muted); text-decoration: none; }
+header nav a:hover, header nav a.on { color: var(--accent); }
+.auth { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.auth input { width: 220px; }
+main { padding: 16px 24px 40px; max-width: 1300px; margin: 0 auto; }
+@media (max-width: 760px) { main { padding: 12px 16px 32px; } header { padding: 12px 16px; } .auth { margin-left: 0; width: 100%; } .auth input { flex: 1; width: auto; } }
+input, select, button { font: inherit; }
+input[type=text], input[type=password], input[type=number], select {
+  color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
+button { border-radius: 6px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--bad-ink); }
+button:disabled { opacity: .5; cursor: default; }
+.bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.bar .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.bar .seg button { border: 0; border-radius: 0; padding: 5px 12px; background: var(--panel); }
+.bar .seg button.on { background: var(--accent); color: #fff; }
+.muted { color: var(--muted); font-size: 12px; }
+.msg { border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; display: none; }
+.msg.show { display: block; }
+.msg.err { background: var(--bad-bg); color: var(--bad-ink); }
+.msg.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.kpi .k { font-size: 12px; color: var(--muted); }
+.kpi .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.kpi .s { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.kpi.good .v { color: var(--ok-ink); }
+.kpi.warn .v { color: var(--warn-ink); }
+.kpi.bad .v { color: var(--bad-ink); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.card h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+.wide { margin-top: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.scroll { overflow-x: auto; }
+.empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
+.pill { display: inline-block; font-size: 11px; border-radius: 4px; padding: 0 6px; }
+.pill.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.pill.off { background: var(--soft); color: var(--muted); }
+form.newkey { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; align-items: end; margin-top: 10px; }
+form.newkey label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 3px; }
+form.newkey input, form.newkey select { width: 100%; }
+.newsecret { margin-top: 10px; background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 10px 12px; display: none; }
+.newsecret code { display: block; margin: 6px 0; padding: 6px 8px; background: var(--code); color: var(--ink); border-radius: 6px; word-break: break-all; font-size: 12px; }
+.budget { margin-top: 6px; }
+.budget .track { height: 10px; background: var(--soft); border-radius: 999px; overflow: hidden; }
+.budget .fill { height: 100%; background: var(--accent); width: 0; }
+.budget .fill.near { background: var(--warn-ink); }
+.budget .fill.over { background: var(--bad-ink); }
+.tips { margin: 0; padding-left: 18px; font-size: 13px; }
+.tips li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>hallugate</h1>
+  <nav><a class="on" href="/console">내 사용 현황</a><a href="/start">시작 안내</a><a href="/demo">데모</a></nav>
+  <div class="auth">
+    <input id="key" type="password" autocomplete="off" placeholder="게이트웨이 키 (x-hallugate-key, hg_...)">
+    <button class="primary" id="load">불러오기</button>
+  </div>
+</header>
+
+<main>
+  <div class="msg" id="msg"></div>
+  <div class="bar">
+    <span class="seg" id="win">
+      <button data-w="24h">24시간</button><button data-w="7d">7일</button><button data-w="30d" class="on">30일</button>
+    </span>
+    <span class="muted" id="when">게이트웨이 키를 넣고 불러오기를 누르세요. 키는 이 탭에만 보관하고, 내 키의 기록만 보입니다.</span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid">
+    <div class="card"><h2>이번 달 예산</h2><div id="t-budget"></div></div>
+    <div class="card"><h2>검증 결과</h2><div id="t-verify"></div></div>
+    <div class="card"><h2>LLM 사용량 (모델별, 추정 비용)</h2><div class="scroll" id="t-llm"></div></div>
+    <div class="card"><h2>참고</h2><ul class="tips" id="tips"></ul></div>
+  </div>
+  <p class="muted">추정 비용은 공개 단가표로 계산한 값이며 캐시 할인을 반영하지 않아 실제 청구액보다 클 수 있습니다. 질문·근거·응답 원문은 기록하지 않고 숫자만 남깁니다(30일 보관).</p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let WIN = '30d';
+const fmtPct = x => x == null ? '–' : (x * 100).toFixed(x < 0.1 ? 1 : 0) + '%';
+const fmtUsd = x => x == null ? '–' : '$' + (x < 1 ? x.toFixed(4) : x.toFixed(2));
+const fmtN = x => x == null ? '–' : Number(x).toLocaleString('ko-KR');
+
+function msg(text, kind) { const m = $('msg'); m.textContent = text; m.className = text ? 'msg show ' + kind : 'msg'; }
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) { if (k === 'class') e.className = v; else e.setAttribute(k, v); }
+  for (const c of kids) e.append(c instanceof Node ? c : document.createTextNode(c == null ? '' : String(c)));
+  return e;
+}
+function table(head, rows, numeric = []) {
+  if (!rows.length) return el('div', { class: 'empty' }, '이 기간에 기록이 없습니다.');
+  const n = i => numeric.includes(i) ? 'n' : '';
+  return el('table', {}, el('thead', {}, el('tr', {}, ...head.map((h, i) => el('th', { class: n(i) }, h)))),
+    el('tbody', {}, ...rows.map(r => el('tr', {}, ...r.map((c, i) => el('td', { class: n(i) }, c))))));
+}
+function kpi(k, v, s, cls) { return el('div', { class: 'kpi ' + (cls || '') }, el('div', { class: 'k' }, k), el('div', { class: 'v' }, v), el('div', { class: 's' }, s || '')); }
+const REASONS = { non_english: '영어가 아님', judge_timeout: '판정 시간 초과', judge_error: '판정기 오류', unknown: '알 수 없음' };
+
+function render(u) {
+  const v = u.verification || {}, tr = u.trim || {}, b = u.budget;
+  const unv = v.responses ? (v.responses - v.fully_verified) / v.responses : null;
+  $('kpis').replaceChildren(
+    kpi('요청', fmtN(u.requests), '성공한 요청'),
+    kpi('환각 판정 문장', fmtPct(v.flag_rate), `${fmtN(v.sentences_flagged)} / ${fmtN(v.sentences_judged)} 문장`),
+    kpi('환각이 있던 응답', fmtN(v.responses_flagged), `검증한 응답 ${fmtN(v.responses)}개 중`),
+    kpi('검증 중단', fmtPct(unv), '영어가 아니거나 판정 실패', unv ? 'warn' : ''),
+    kpi('LLM 추정 비용', fmtUsd(u.est_cost_usd), `입력 ${fmtN(u.tokens_in)} · 출력 ${fmtN(u.tokens_out)} 토큰`),
+    kpi('근거 다이어트 절감', fmtPct(tr.saved_ratio), tr.requests ? `${fmtN(tr.requests)}개 요청에서 근거 글자 수` : 'trim을 켠 요청 없음', tr.saved_ratio ? 'good' : ''),
+  );
+  if (!b) $('t-budget').replaceChildren(el('div', { class: 'empty' }, '예산이 설정되지 않았습니다. 필요하면 운영자에게 월 한도(토큰 또는 USD)를 요청하세요.'));
+  else {
+    const used = b.used || 0, cls = used >= 1 ? 'over' : used >= 0.8 ? 'near' : '';
+    const fill = el('div', { class: 'fill ' + cls }); fill.style.width = Math.min(100, used * 100) + '%';
+    $('t-budget').replaceChildren(
+      el('div', { class: 'kpi ' + (used >= 1 ? 'bad' : used >= 0.8 ? 'warn' : 'good') }, el('div', { class: 'k' }, `${b.month} 사용률`), el('div', { class: 'v' }, fmtPct(used))),
+      el('div', { class: 'budget' }, el('div', { class: 'track' }, fill)),
+      table(['항목', '사용', '한도'], [
+        ...(b.monthly_usd != null ? [['비용 (USD)', fmtUsd(b.cost_used_usd), fmtUsd(b.monthly_usd)]] : []),
+        ...(b.monthly_tokens != null ? [['토큰', fmtN(b.tokens_used), fmtN(b.monthly_tokens)]] : []),
+        ['넘으면', b.action === 'block' ? '요청 차단 (429)' : '경고 헤더만', '']], [1, 2]));
+  }
+  $('t-verify').replaceChildren(table(['항목', '값'], [
+    ['검증한 응답', fmtN(v.responses)], ['끝까지 검증된 응답', fmtN(v.fully_verified)],
+    ['판정한 문장', fmtN(v.sentences_judged)], ['환각 판정 문장', fmtN(v.sentences_flagged)],
+    ...Object.entries(v.unverified_by_reason || {}).map(([k, n]) => ['검증 중단: ' + (REASONS[k] || k), fmtN(n)])], [1]));
+  $('t-llm').replaceChildren(table(['모델', '요청', '입력', '출력', '비용'], Object.entries(u.by_model || {}).map(([m, d]) =>
+    [m, fmtN(d.requests), fmtN(d.tokens_in), fmtN(d.tokens_out), fmtUsd(d.est_cost_usd)]), [1, 2, 3, 4]));
+  const tips = [];
+  if ((v.unverified_by_reason || {}).non_english) tips.push('판정기는 영어만 검증합니다. 영어가 아닌 문장이 나오면 그 응답은 검증을 멈추고 본문만 그대로 전달합니다.');
+  if (!tr.requests && u.tokens_in > 0) tips.push('근거 문서가 길다면 "verification": {"trim": true}로 LLM 입력 토큰을 줄일 수 있습니다(실험에서 약 48% 절감, 답 품질 유지).');
+  if (v.responses === 0 && u.requests > 0) tips.push('근거 문서를 보내지 않으면 검증하지 않습니다. verification.context 또는 <context> 태그로 근거를 넣으세요.');
+  if (b && b.used >= 0.8) tips.push('이번 달 예산의 80% 이상을 썼습니다.');
+  if (!tips.length) tips.push('특이 사항이 없습니다.');
+  $('tips').replaceChildren(...tips.map(t => el('li', {}, t)));
+}
+
+async function load() {
+  msg('');
+  const k = $('key').value.trim();
+  try { sessionStorage.setItem('hgkey', k); } catch (e) {}
+  $('load').disabled = true;
+  try {
+    const r = await fetch('/v1/usage?window=' + WIN, { headers: { 'x-hallugate-key': k } });
+    if (r.status === 401) throw new Error('게이트웨이 키가 없거나 틀렸습니다.');
+    if (!r.ok) throw new Error('/v1/usage → ' + r.status);
+    render(await r.json());
+    $('when').textContent = `최근 ${WIN} · ${new Date().toLocaleTimeString('ko-KR')} 기준`;
+  } catch (e) { msg(e.message, 'err'); }
+  finally { $('load').disabled = false; }
+}
+document.querySelectorAll('#win button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#win button').forEach(x => x.classList.toggle('on', x === b));
+  WIN = b.dataset.w; if ($('key').value.trim()) load();
+});
+$('load').onclick = load;
+$('key').onkeydown = e => { if (e.key === 'Enter') load(); };
+try { const k = sessionStorage.getItem('hgkey'); if (k) { $('key').value = k; load(); } } catch (e) {}
+</script>
+</body>
+</html>

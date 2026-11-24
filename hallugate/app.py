@@ -189,6 +189,25 @@ def create_app(settings=None, judge=None, http_client=None, store=None, post_che
             return _err('demo page is disabled', 404, 'not_found_error')
         return HTMLResponse(open(path, encoding='utf-8').read())
 
+    def _page(name):
+        # 운영자·사용자 화면 (SPEC §10.11): 운영 모드 전용, 외부 리소스 없는 HTML 한 장
+        path = os.path.join(os.path.dirname(__file__), 'static', name)
+        if not settings.hosted or not os.path.isfile(path):
+            return _err('page is available only in hosted mode', 404, 'not_found_error')
+        return HTMLResponse(open(path, encoding='utf-8').read())
+
+    @app.get('/admin', include_in_schema=False)
+    async def admin_page():
+        return _page('admin.html')
+
+    @app.get('/console', include_in_schema=False)
+    async def console_page():
+        return _page('console.html')
+
+    @app.get('/start', include_in_schema=False)
+    async def start_page():
+        return _page('start.html')
+
     @app.get('/health')
     async def health():
         if settings.hosted:                              # 운영 모드: 판정기 내부 값은 숨긴다 (SPEC §10.1)

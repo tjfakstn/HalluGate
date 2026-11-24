@@ -65,6 +65,31 @@ def llm_usage(model, usage):
             'llm_cost_usd': cost_usd(model, tin, tout)}
 
 
+def _verify_totals(rows):
+    """검증·환각 집계 (SPEC §10.11). rows는 200 응답, 검증을 켠(mode≠off) 것만 센다."""
+    vr = [r for r in rows if r.get('mode') and r.get('mode') != 'off' and r.get('verified') is not None]
+    judged = sum(r.get('n_sentences') or 0 for r in vr)
+    flagged = sum(r.get('n_flagged') or 0 for r in vr)
+    reasons = {}
+    for r in vr:
+        if not r.get('verified'):
+            k = r.get('unverified_reason') or 'unknown'
+            reasons[k] = reasons.get(k, 0) + 1
+    return {'responses': len(vr), 'fully_verified': sum(1 for r in vr if r.get('verified')),
+            'responses_flagged': sum(1 for r in vr if (r.get('n_flagged') or 0) > 0),
+            'sentences_judged': judged, 'sentences_flagged': flagged,
+            'flag_rate': (flagged / judged) if judged else None, 'unverified_by_reason': reasons}
+
+
+def _trim_totals(rows):
+    """근거 다이어트 절감 집계 (SPEC §10.11)."""
+    tr = [r for r in rows if (r.get('trim_chars_before') or 0) > 0]
+    before = sum(r['trim_chars_before'] for r in tr)
+    after = sum(r.get('trim_chars_after') or 0 for r in tr)
+    return {'requests': len(tr), 'chars_before': before, 'chars_after': after,
+            'saved_ratio': (1 - after / before) if before else None}
+
+
 def _llm_totals(rows):
     out = {'tokens_in': 0, 'tokens_out': 0, 'tokens_cached': 0, 'est_cost_usd': 0.0, 'by_model': {}}
     for r in rows:
@@ -131,7 +156,7 @@ class MetricsStore:
     def usage(self, key_id, window_s):
         """사용자 본인 사용량 (GET /v1/usage, SPEC §10.10)."""
         rows = [r for r in self.rows(time.time() - window_s) if r.get('key_id') == key_id and r.get('status') == 200]
-        return {'requests': len(rows), **_llm_totals(rows)}
+        return {'requests': len(rows), **_llm_totals(rows), 'verification': _verify_totals(rows), 'trim': _trim_totals(rows)}
 
     def purge(self, key_id):
         with self._lock, self._db:
@@ -167,6 +192,8 @@ class MetricsStore:
                            'quota': sum(1 for p in pcs if p.get('reason') == 'quota'), 'est_cost_usd': round(cost, 6)},
             'rate_limited': sum(1 for r in rows if r.get('status') == 429),
             'llm': _llm_totals(ok),
+            'verification': _verify_totals(ok),
+            'trim': _trim_totals(ok),
             'cold_starts': [{**st, 'first_ttft_ms': next((r.get('ttft_ms') for r in ok if r.get('cold') and r['ts'] >= st['ts']), None)}
                             for st in starts],
         }
