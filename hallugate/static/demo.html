@@ -120,6 +120,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
       <textarea id="ref" rows="6"></textarea>
       <label for="q">질문</label>
       <input id="q" type="text">
+      <label class="check"><input id="ragmsg" type="checkbox" checked> 근거를 LLM에도 보내기 (질문 메시지에 <code>&lt;context&gt;</code> 태그로 넣음 — 실제 RAG처럼 LLM이 근거를 보고 답함)</label>
       <label for="mock">가짜 LLM 응답 <span class="hint">(실제 LLM에 연결했다면 비워 두세요)</span></label>
       <textarea id="mock" rows="5"></textarea>
       <div class="row">
@@ -193,6 +194,13 @@ const PRESETS = [
   { name: '근거와 모순', q: 'How did Hanbit Robotics do in 2023?',
     a: 'Hanbit Robotics builds warehouse robots and employs about 340 people. In 2023 it reported revenue of 52 million dollars, down 18 percent after losing its biggest customer in Germany. Its main customers are logistics firms in Korea and Japan.' },
 ];
+// 운영 모드(실제 LLM)용: 근거와 질문만 채우고 답은 LLM이 만든다 (SPEC §2.8)
+const LIVE_PRESETS = [
+  { name: '문서 안 질문', q: 'How did Hanbit Robotics do in 2023?' },
+  { name: '문서 밖까지 묻기 (환각 유도)', q: 'Write a detailed company profile of Hanbit Robotics: the founder\'s background, its flagship robot models, its biggest customers by name, and its plans for the next two years.' },
+  { name: '수치 계산', q: 'What was Hanbit Robotics\' revenue in 2022, and about how much revenue does it make per employee?' },
+];
+const RAG_SYSTEM = "Answer the user's question in English based on the document inside the context tags.";
 const $ = id => document.getElementById(id);
 let ctrl = null, S = null, HOSTED = false;
 
@@ -206,16 +214,21 @@ function keyHeaders() {
   return { 'x-upstream': u, ...(k ? { 'x-hallugate-key': k } : {}), ...(l ? { 'Authorization': 'Bearer ' + l } : {}) };
 }
 
-function loadPreset(p) { $('ref').value = REF; $('q').value = p.q; $('mock').value = HOSTED ? '' : p.a; $('source').value = ''; }
+function loadPreset(p) { $('ref').value = REF; $('q').value = p.q; $('mock').value = HOSTED ? '' : (p.a || ''); $('source').value = ''; }
+function showPresets(list) {
+  $('presets').innerHTML = '';
+  list.forEach(p => { const b = document.createElement('button'); b.className = 'chip'; b.textContent = p.name; b.onclick = () => loadPreset(p); $('presets').appendChild(b); });
+}
 
 async function init() {
-  PRESETS.forEach(p => { const b = document.createElement('button'); b.className = 'chip'; b.textContent = p.name; b.onclick = () => loadPreset(p); $('presets').appendChild(b); });
+  showPresets(PRESETS);
   loadPreset(PRESETS[1]);
   try {
     const h = await (await fetch('/health')).json();
     if (h.hosted) {
       HOSTED = true; $('keycard').hidden = false;
-      $('presethint').textContent = '예제는 근거와 질문만 채웁니다. 실제 LLM이 답을 생성합니다.';
+      showPresets(LIVE_PRESETS); loadPreset(LIVE_PRESETS[1]);
+      $('presethint').textContent = '예제는 근거와 질문만 채웁니다. 실제 LLM이 답을 만들므로 환각이 매번 나오지는 않습니다. "문서 밖까지 묻기"가 환각을 가장 잘 끌어냅니다.';
       try {
         $('hgkey').value = sessionStorage.getItem('hgkey') || ''; $('llmkey').value = sessionStorage.getItem('llmkey') || '';
         $('upstream').value = sessionStorage.getItem('upstream') || 'openai';
@@ -340,7 +353,12 @@ async function send() {
   reset(); S.mode = $('mode').value;
   const ver = { mode: $('mode').value, action: $('action').value, stride: Math.max(0, parseInt($('stride').value || '0', 10)), post_check: $('post').checked };
   if ($('source').value) ver.collection = $('source').value; else ver.context = $('ref').value;
-  const body = { model: $('model').value || 'mock', stream: true, messages: [{ role: 'user', content: $('q').value }], verification: ver };
+  let messages = [{ role: 'user', content: $('q').value }];
+  if (!$('source').value && $('ragmsg').checked) {      // 근거를 LLM에도: <context> 태그 → 게이트웨이가 같은 근거로 판정 (SPEC §2.1·2.8)
+    delete ver.context;
+    messages = [{ role: 'system', content: RAG_SYSTEM }, { role: 'user', content: '<context>\n' + $('ref').value + '\n</context>\n\n' + $('q').value }];
+  }
+  const body = { model: $('model').value || 'mock', stream: true, messages, verification: ver };
   if ($('mock').value.trim()) Object.assign(body, { mock_response: $('mock').value, mock_token_ms: parseInt($('speed').value || '60', 10), mock_ttft_ms: 300 });
   ctrl = new AbortController(); $('send').disabled = true; $('stop').disabled = false;
   const tick = setInterval(stats, 100);

@@ -893,6 +893,8 @@ async def test_demo_page(tmp_path):
     r = await client.get('/demo')
     assert r.status_code == 200 and r.headers['content-type'].startswith('text/html')
     assert '/v1/chat/completions' in r.text and 'post_check' in r.text and 'mock_response' in r.text
+    # 근거를 LLM에도 보내기: <context> 태그 + 시스템 지시, 운영 모드 전용 예제 (SPEC §2.8)
+    assert 'id="ragmsg"' in r.text and '<context>' in r.text and 'LIVE_PRESETS' in r.text
     assert 'http://' not in r.text.replace('http://www.w3.org', '') and 'https://' not in r.text   # 외부 리소스 없음
     s_off = Settings(upstream_base_url='http://mock/v1', metrics_path='', collection_db='', demo=False)
     off = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(s_off, judge=LexicalJudge(), http_client=up)),

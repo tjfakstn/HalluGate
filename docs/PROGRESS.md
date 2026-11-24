@@ -424,10 +424,18 @@
 - **데모(가짜 LLM + 실제 조합 판정기)**: "근거와 일치" 경고 없음, "근거에 없는 내용"·"근거와 모순"은 문제 문장만 환각(점수 3.77·3.34, 임계값 2.7385). 모순 문장은 문장이 끝나기 전 앞부분 판정에서 먼저 경보. 시연용 예제라 성능 수치로 쓰지 않음
 - 맥 로컬 실행: `JUDGE_MODEL_DIR=judge_combo JUDGE_DEVICE=mps JUDGE_TIMEOUT_MS=15000 python serve.py`
 
-## 11/23 — Modal 배포 준비 (진행 중)
+## 11/23 — Modal 배포 준비
 
 - Modal CLI 설치(`brew install modal`, 1.6.4)·로그인(워크스페이스 `tjfakstn`)
 - Volume `hallugate-models`·`hallugate-data` 생성, 판정기 폴더 `judge_combo`(약 1.1GB)를 `/judge_combo`로 업로드
 - Secret `hallugate`(ADMIN_TOKEN) 생성 — 관리자 토큰 원문은 맥 `~/.hallugate_admin_token`(권한 600)에만 저장, 화면·저장소에 남기지 않음
 - 배포 파일 수정: `add_local_python_source('hallugate')`는 저장소 루트가 import 경로에 없으면 패키지를 못 찾으므로 `add_local_dir`로 패키지 폴더를 그대로 넣음(데모 HTML·단가표 포함)
 - 이미지 빌드 성공(약 70초, 첫 시도는 Modal 쪽 외부 중단으로 재시도). **GPU(L4) 함수는 결제 수단 등록이 있어야 실행됨** → 사용자가 Modal에 결제 수단을 등록한 뒤 배포·측정(H8) 진행
+
+## 11/24 — Modal 배포·첫 측정, 데모 RAG 수정
+
+- 결제 수단 등록 후 `check_models`·`modal deploy` 성공. 주소 `https://tjfakstn--hallugate-web.us-east.modal.run`
+- **콜드 스타트 약 5분**(150+148초, 재배포 후 302.9초). 게이트웨이 시작 자체는 약 10초이고 나머지는 Modal 컨테이너 준비(GPU 배정·이미지 내려받기 추정). 150초가 넘으면 Modal이 303으로 다시 요청하게 함 → 시연·초대 사용 시간에는 `HG_MIN_CONTAINERS=1`
+- 테스트 키 `beta-test`(7a3671ba) 발급. 실제 Claude 스트리밍 요청 1건: 첫 글자 1.30초, 판정 p95 76ms, 응답 중 영어가 아닌 문장으로 `non_english` 중단
+- **데모 수정**: 근거가 판정기에만 가고 LLM에는 질문만 가던 문제 → 근거를 `<context>` 태그로 LLM에도 보냄(기본 켬), 실제 LLM용 예제 3개 추가(SPEC §2.8, 테스트 보강). 로컬 가짜 LLM으로 태그 근거 판정 확인 후 재배포
+- **다음**: 데모로 실제 요청 여러 건 → 판정 p95·하루 비용(H8), 사용자 현황 화면(`/console`), 시작 안내 페이지
