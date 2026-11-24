@@ -1601,3 +1601,12 @@ async def test_hosted_trace_upstream_error(tmp_path):
         assert r.status_code == 400
         d = (await c.get(f"/v1/traces/{r.headers['x-hallugate-trace-id']}")).json()
         assert d['status'] == 400 and 'gpt-nope' in d['error'] and d['request']['messages'][0]['content'] == 'q'
+
+
+def test_cold_starts_match_own_window():
+    # 시작 직후 요청이 없던 컨테이너 시작에 다음 시작의 요청이 붙지 않음 (SPEC §10.6)
+    from hallugate.metrics import _cold_starts
+    starts = [{'ts': 100, 'warmup_ms': 1}, {'ts': 200, 'warmup_ms': 2}, {'ts': 300, 'warmup_ms': 3}]
+    ok = [{'ts': 210, 'cold': True, 'ttft_ms': 805}, {'ts': 220, 'cold': False, 'ttft_ms': 50},
+          {'ts': 310, 'cold': True, 'ttft_ms': 900}]
+    assert [c['first_ttft_ms'] for c in _cold_starts(starts, ok)] == [None, 805, 900]

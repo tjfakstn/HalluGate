@@ -108,6 +108,16 @@ def _llm_totals(rows):
     return out
 
 
+def _cold_starts(starts, ok):
+    """컨테이너 시작마다 그 시작 직후 첫 요청의 첫 글자 지연 (SPEC §10.6). 다음 시작 전까지의 콜드 요청만 본다."""
+    out = []
+    for i, st in enumerate(starts):
+        end = starts[i + 1]['ts'] if i + 1 < len(starts) else float('inf')
+        out.append({**st, 'first_ttft_ms': next((r.get('ttft_ms') for r in ok
+                                                if r.get('cold') and st['ts'] <= r['ts'] < end), None)})
+    return out
+
+
 def rejected(key_id, status, upstream='', stream=False, cold=False):
     """기록 객체가 없는 요청(인증 실패·한도·잘못된 요청·업스트림 오류)의 요약."""
     return {'key_id': key_id or '', 'upstream': upstream, 'status': status, 'stream': bool(stream), 'cold': bool(cold)}
@@ -195,6 +205,5 @@ class MetricsStore:
             'verification': _verify_totals(ok),
             'trim': _trim_totals(ok),
             'traces': sum(1 for r in ok if r.get('traced')),    # 추적을 켠 요청 수만 (원문은 운영자에게 안 보임, SPEC §10.12)
-            'cold_starts': [{**st, 'first_ttft_ms': next((r.get('ttft_ms') for r in ok if r.get('cold') and r['ts'] >= st['ts']), None)}
-                            for st in starts],
+            'cold_starts': _cold_starts(starts, ok),
         }
