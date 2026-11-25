@@ -152,6 +152,7 @@ AGENTS.md · CLAUDE.md   AI 코딩 에이전트 작업 규칙
 | [SSOT.md](SSOT.md) | 데이터 분할, 판정기 사양, 모든 실측 수치, 사전 기준, 결정 기록, 일정 |
 | [SPEC.md](SPEC.md) | API, 전달 정책, 불변식, 운영 모드, 수용 기준 |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | 시간 순 진행 기록과 현재 위치·다음 할 일 |
+| [docs/MODEL_CARD.md](docs/MODEL_CARD.md) | 판정기 v1.0 사양·학습 데이터·성능·한계 |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 배포, 사용자 관리, 관측, 장애 대응, 비용 |
 | [docs/RESEARCH_PLAN.md](docs/RESEARCH_PLAN.md) | 스트리밍 조기 탐지 연구 설계 |
 | [AGENTS.md](AGENTS.md) | 작업 규칙 (SPEC → 테스트 → 코드, 연구 공정성) |
