@@ -74,7 +74,7 @@ def mark(text, starts):
 """
 
 AC1_REWRITE = r"""
-REWRITER, REWRITE_MAX, LABELER = 'claude-haiku-5-5', 2048, 'claude-opus-5-5'
+REWRITER, REWRITE_MAX, LABELER = 'claude-haiku-5-5', 2048, 'claude-sonnet-5-5'   # 평가자 Sonnet (11/27 사용자 결정, 비용)
 _KEEP = '''Keep the original format (line breaks, lists), tone, and length as much as possible. Do not add any information that is not in the REFERENCE.
 Output ONLY the revised response text, with no explanation, heading, or quotation marks.'''
 TGT_SYSTEM = '''You revise a response so that every statement is supported by the REFERENCE.
@@ -271,7 +271,7 @@ md(r"""# AC1 — 자동 교정: 판정기가 경고한 문장을 LLM이 고쳐 �
   - `orig`: 원본 그대로
   - `tgt`: **경고 응답만** `claude-haiku-5-5`가 고쳐 씀 — 경고 문장 앞에 `[CHECK]` 표시, 그 문장만 근거와 대조해 고치거나 뺌
   - `blind`: **모든 응답**을 같은 모델이 표시 없이 "근거와 대조해 근거 없는 내용을 고쳐라"로 고쳐 씀 (대조군)
-- **평가**(`claude-opus-5-5`, 어느 팔인지 가림, 같은 글은 한 번만): 충실성(R4 문장 S/H/A → H 하나라도 있으면 환각 응답), 정답성(QA만, T1b yes/partial/no), 정보 손실(고친 글만, "근거가 뒷받침하는 원본 정보를 빼거나 약화했나")
+- **평가**(`claude-sonnet-5-5`, 11/27 Opus에서 변경 — 비용, 어느 팔인지 가림, 같은 글은 한 번만): 충실성(R4 문장 S/H/A → H 하나라도 있으면 환각 응답), 정답성(QA만, T1b yes/partial/no), 정보 손실(고친 글만, "근거가 뒷받침하는 원본 정보를 빼거나 약화했나")
 
 ## 사전 정의 기준 (SSOT §6 AC1, 11/26 고정)
 
@@ -280,7 +280,7 @@ md(r"""# AC1 — 자동 교정: 판정기가 경고한 문장을 LLM이 고쳐 �
 - **AC1-2 (부작용)**: QA `yes` tgt − orig ≥ −0.05(하한 ≥ −0.10), 그리고 tgt에서 고친 응답 중 정보 손실 ≤ 15%
 - **AC1-3 (판정기의 가치)**: 고친 응답 비율 ≤ 30%, 그리고 감소폭 (orig − tgt) ≥ 0.5 × (orig − blind)
 - **채택 = AC1-0~3** → 게이트웨이 "응답 끝 교정" 기능을 SPEC부터 설계(선택 기능). AC1-1·2만 충족이면 "교정 효과는 있으나 판정기 안내의 이점은 확인 안 됨"
-- 응답 단위 쌍체 부트스트랩 2,000회(시드 2040). **API 상한 $25**(제출 전 예상 > $22면 멈춤)
+- 응답 단위 쌍체 부트스트랩 2,000회(시드 2040). **API 상한 $15**(제출 전 예상 > $12면 멈춤)
 
 ## 실행 방법
 
@@ -357,7 +357,7 @@ print(f'경고 응답 {nf}/{len(FLAGS)} ({nf / len(FLAGS):.3f}) | 과제별', {t
 
 md("## 4. 고쳐 쓰기 (Haiku) — 형식 확인 → 비용 추정 → 배치")
 code(T1.T1_API + AC1_REWRITE + AC1_EVAL + GRADE + r"""
-BUDGET_USD, STOP_USD = 25.0, 22.0
+BUDGET_USD, STOP_USD = 15.0, 12.0
 def est_cost(reqs, out_tok):
     tot = 0.0
     for p in reqs.values():
@@ -393,7 +393,7 @@ print(f"세 팔 확보 {len(TX)}/{len(FLAGS)} | 고친 글 무효 tgt {sum(1 for
       f"원본과 같은 글 tgt {sum(1 for r, t in TX.items() if FLAGS[r] and t['tgt'] == t['orig'])}, blind {sum(1 for t in TX.values() if t['blind'] == t['orig'])}")
 """)
 
-md("## 5. 평가 (Opus, 어느 팔인지 가림) — 충실성·정답성(QA)·정보 손실")
+md("## 5. 평가 (Sonnet, 어느 팔인지 가림) — 충실성·정답성(QA)·정보 손실")
 code(r"""
 REQ_F, REQ_Q, REQ_L = eval_requests(ITEMS, TX)
 EST2 = est_cost(REQ_F, 400) + est_cost(REQ_Q, 80) + est_cost(REQ_L, 80)

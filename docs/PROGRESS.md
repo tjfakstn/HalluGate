@@ -234,7 +234,7 @@
 
 **다음 할 일**
 1. **J2 최신 LLM 탐지율 올리기**(11/27 재설계): 최신 Claude 응답에서 1차(판정기) + 2차(Haiku 5회 투표·MiniCheck) 결합 탐지율 ≥ 40%·오경보 ≤ 20%. `j2_max_detection.ipynb` 실행(GPU, API 약 $2, 상한 $10)
-2. **AC1 자동 교정 실험**(이전 이름 C1): 사전 기준 고정·노트북 준비 완료(아래 11/26 절) → `ac1_auto_correct.ipynb` 실행(GPU, `ANTHROPIC_API_KEY`, 상한 $25)
+2. **AC1 자동 교정 실험**(이전 이름 C1): 사전 기준 고정·노트북 준비 완료(아래 11/26 절) → `ac1_auto_correct.ipynb` 실행(GPU, `ANTHROPIC_API_KEY`, 평가자 Sonnet, 상한 $15)
 3. **S5 최종 평가**(~12/1): RAGTruth test 1회 개방, LettuceDetect·HHEM·LLM 직접 판정과 비교
 4. 사용자 몫: 사람 점검 30개(`r4/r4_human_audit.csv`), Modal 지출 상한 $30, 하루 비용 확인(H8 마지막 항목)
 5. S6(12/2~12/15): 데모 영상·보고서·SOFTCON. 초대 베타 안내 문구는 실험 결과 뒤
@@ -470,4 +470,4 @@
 - 1차 점수·정답은 저장소 K2 표(`k2_{calM,devM}.csv`)를 노트북에 그대로 넣었고, builder가 K2 보고 수치(36/191, 58/881)와 같은지 assert. 응답 원문·근거만 드라이브 `k2/`에서 읽음
 - `build_j2.py`·`smoke_j2.py` 다시 작성(채택, 2차 무력(임계값 inf → 1차만), 파싱 실패 표시 안 함 확인) → `j2_max_detection.ipynb`
 - **한계**: 정답이 Opus이고 Haiku도 Claude 계열이라 사람 정답보다 유리할 수 있다. 채택되면 `post_check`(지금 Sonnet 3회)를 Haiku 5회 투표로 바꾼다
-
+- **AC1 평가자 변경(같은 날, 실행 전)**: Opus → Sonnet(사용자 결정, 비용). 상한 $25 → $15, 기준은 그대로

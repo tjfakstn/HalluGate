@@ -59,7 +59,7 @@ exec(C.AC1_REWRITE + C.AC1_EVAL + C.GRADE, G)
 REQ = G['rewrite_requests'](ITEMS, FLAGS)
 assert sum(k.startswith('t-') for k in REQ) == nf and sum(k.startswith('b-') for k in REQ) == 450
 assert '[CHECK]' in REQ['t-' + it['rid']]['messages'][0]['content'] and '[CHECK]' not in REQ['b-' + it['rid']]['messages'][0]['content']
-assert REQ['t-' + it['rid']]['model'] == 'claude-haiku-5-5'
+assert REQ['t-' + it['rid']]['model'] == 'claude-haiku-5-5' and G['LABELER'] == 'claude-sonnet-5-5'
 print(f'[4] 고쳐 쓰기 요청 tgt {nf}(경고 응답만) + blind 450')
 
 def fix(text, words):
