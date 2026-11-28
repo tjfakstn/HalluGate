@@ -232,7 +232,7 @@ print('device', GPU)
 """)
 
 md("## 2. 최신 Claude 응답 (calM·devM) — K2 정답·1차 점수 + 응답 원문")
-code("K2T = " + json.dumps(K2T) + "\nTHR_B = " + repr(THR_B) + "      # 판정기 v1.0 임계값 B\n" + J2_DATA + r"""
+code("K2T = " + repr(K2T) + "\nTHR_B = " + repr(THR_B) + "      # 판정기 v1.0 임계값 B\n" + J2_DATA + r"""
 CASES = {sp: load_json(os.path.join(K2_DIR, f'cases_{sp}.json')) for sp in K2T}
 GENS = {sp: load_json(os.path.join(K2_DIR, f'gen_{sp}.json')) for sp in K2T}
 P = make_table(K2T, CASES, GENS, THR_B)

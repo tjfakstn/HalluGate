@@ -13,6 +13,9 @@ import build_j2 as J
 n = sum(1 for c in J.cells if c['cell_type'] == 'code' and ast.parse(c['source']))
 print(f"[1] j2: 코드 셀 {n}개 문법 통과 | 저장소 K2 표 재현 devM {J.REPRO['devM']}, calM {J.REPRO['calM']}")
 assert len(J.K2T['calM']) == 1072 and len(J.K2T['devM']) == 1072
+_cell = next(c['source'] for c in J.cells if c['cell_type'] == 'code' and c['source'].startswith('K2T = '))
+_g = {}; exec(_cell.split('\nimport pandas')[0], _g)          # 노트북 셀의 K2T·THR_B 줄을 실제로 실행 (11/28 false/true 오류 재발 방지)
+assert _g['K2T'] == J.K2T and _g['THR_B'] == J.THR_B
 
 rng = np.random.default_rng(0)
 K2T, CASES, GENS = {}, {}, {}
